@@ -55,15 +55,15 @@ Upon the first launch, the program will generate a default configuration file an
 * `zabbix_user` / `zabbix_password`: Your Zabbix credentials if you are not using an API token.
 
 ## Building the Executable (Windows)
-You can compile the script into a standalone `.exe` file so it can run on systems without Python installed. Tested with **Python 3.12**.
+You can compile the script into a standalone `.exe` file so it can run on systems without Python installed. The build command includes the necessary font and icon assets.
 
 # Install PyInstaller
 pip install pyinstaller
 
-# Build a standalone executable (-F) without a console window (-w), including the icon
-pyinstaller -w -F --icon=zabbix_icon.ico zabbix_overlay.py
+# Build a standalone executable without a console window, including resources
+pyinstaller --noconsole --onefile --add-data "IBMPlexSansKR-Regular.ttf;." --add-data "zabbix_icon.ico;." --icon "zabbix_icon.ico" zabbix_overlay.py
 
 Once completed, you will find the `zabbix_overlay.exe` inside the `dist` folder.
 
 ## License
-This project is licensed under the MIT License.
+The license for this project has not been specified yet.
