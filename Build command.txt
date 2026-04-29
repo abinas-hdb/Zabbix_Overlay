@@ -1,0 +1,1 @@
+pyinstaller --noconsole --onefile --add-data "IBMPlexSansKR-Regular.ttf;." --add-data "zabbix_icon.ico;." --icon "zabbix_icon.ico" zabbix_overlay.py
