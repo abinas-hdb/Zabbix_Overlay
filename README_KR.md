@@ -55,15 +55,15 @@ python zabbix_overlay.py
 * `zabbix_user` / `zabbix_password`: API Token이 없을 경우 사용하는 Zabbix 계정 정보.
 
 ## 실행 파일(exe) 빌드 방법 (Windows)
-Python이 설치되지 않은 환경에서도 실행할 수 있도록 단일 실행 파일(`.exe`)로 빌드하는 방법입니다. **Python 3.12** 환경에서 테스트되었습니다.
+Python이 설치되지 않은 환경에서도 실행할 수 있도록 단일 실행 파일(`.exe`)로 빌드하는 방법입니다. 폰트 및 아이콘 파일을 포함하도록 구성되었습니다.
 
 # PyInstaller 설치
 pip install pyinstaller
 
-# 아이콘을 포함하여 콘솔창이 뜨지 않는(-w) 단일 파일(-F)로 빌드
-pyinstaller -w -F --icon=zabbix_icon.ico zabbix_overlay.py
+# 리소스를 포함하여 콘솔창이 없는 단일 파일로 빌드
+pyinstaller --noconsole --onefile --add-data "IBMPlexSansKR-Regular.ttf;." --add-data "zabbix_icon.ico;." --icon "zabbix_icon.ico" zabbix_overlay.py
 
 빌드가 완료되면 `dist` 폴더 안에 `zabbix_overlay.exe` 파일이 생성됩니다.
 
 ## 라이선스
-This project is licensed under the MIT License.
+본 프로젝트의 라이선스는 아직 지정되지 않았습니다.
