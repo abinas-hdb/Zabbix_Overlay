@@ -1,5 +1,7 @@
 # Zabbix Overlay Widget
 
+> **Read this in other languages:** [한국어 (Korean)](README_KR.md)
+
 A powerful desktop widget that monitors real-time Zabbix problems and displays them in an intuitive, floating UI right on your desktop. It is designed to help you quickly assess and respond to system alerts without needing to keep a web browser open.
 
 > **Note**: The code structuring and documentation for this project were assisted by **Gemini**, Google's AI model.
