@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QMenu, QAction,
                              QListWidget, QLabel, QPushButton, QHBoxLayout, QMessageBox, 
                              QListWidgetItem, QDialog, QFormLayout, QDialogButtonBox, 
                              QPlainTextEdit, QComboBox, QCheckBox, QFrame, QBoxLayout,
-                             QTabWidget, QTextBrowser, QSystemTrayIcon, QWidgetAction, QSizePolicy, QGridLayout, QSizeGrip)
+                             QTabWidget, QTextBrowser, QSystemTrayIcon, QWidgetAction, QSizePolicy, QGridLayout, QSizeGrip, QGraphicsDropShadowEffect)
 from PyQt5.QtCore import Qt, QPoint, QVariantAnimation, QThread, pyqtSignal, QTimer, QEvent, QSize, QSharedMemory, QPointF
 from PyQt5.QtGui import QPainter, QColor, QBrush, QFont, QPen, QFontMetrics, QFontDatabase, QIcon, QPixmap, QPolygonF
 
@@ -34,7 +34,7 @@ def get_build_hash():
     except Exception:
         return "DEV01"
 
-APP_VERSION = "v1.0.5" 
+APP_VERSION = "v1.0.6" 
 BUILD_HASH = get_build_hash() 
 shared_mem = None
 
@@ -136,6 +136,7 @@ class Translator:
             "menu_layout": "배치 방향",
             "layout_vert": "세로 배치",
             "layout_hori": "가로 배치",
+            "menu_noti_update": "업데이트 알림 표시 (메시지/심각도 변경)",
             "menu_noti_duration": "알림 유지 시간",
             "noti_off": "알림 끄기",
             "noti_3s": "3초",
@@ -157,6 +158,9 @@ class Translator:
             "menu_lang": "🌐 언어 (Language)",
             "lang_ko": "한국어",
             "lang_en": "English",
+            "menu_color_mode": "🎨 컬러 모드 (Color Mode)",
+            "mode_dark": "다크 모드 (Dark)",
+            "mode_light": "라이트 모드 (Light)",
             "menu_debug": "디버그 모드 (로그 기록)",
             "menu_exit": "프로그램 종료",
             "btn_close": "닫기",
@@ -248,6 +252,7 @@ class Translator:
             "menu_layout": "Layout Direction",
             "layout_vert": "Vertical",
             "layout_hori": "Horizontal",
+            "menu_noti_update": "Show Update Alerts",
             "menu_noti_duration": "Notification Duration",
             "noti_off": "Off",
             "noti_3s": "3s",
@@ -269,6 +274,9 @@ class Translator:
             "menu_lang": "🌐 Language",
             "lang_ko": "Korean (한국어)",
             "lang_en": "English",
+            "menu_color_mode": "🎨 Color Mode",
+            "mode_dark": "Dark Mode",
+            "mode_light": "Light Mode",
             "menu_debug": "Debug Mode",
             "menu_exit": "Exit Program",
             "btn_close": "Close",
@@ -442,12 +450,39 @@ def zabbix_api_call(config, method, params):
     return data["result"]
 
 def apply_z_order(widget, is_topmost):
-    hwnd = int(widget.winId())
+    try:
+        hwnd = int(widget.winId())
+    except Exception:
+        return
+        
     HWND_TOPMOST = -1
     HWND_NOTOPMOST = -2
-    flags = 0x0001 | 0x0002 | 0x0040 # SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW
-    target = HWND_TOPMOST if is_topmost else HWND_NOTOPMOST
-    ctypes.windll.user32.SetWindowPos(hwnd, target, 0, 0, 0, 0, flags)
+    
+    GWL_EXSTYLE = -20
+    WS_EX_TOPMOST = 0x00000008
+    
+    SWP_NOSIZE = 0x0001
+    SWP_NOMOVE = 0x0002
+    SWP_NOACTIVATE = 0x0010
+    SWP_FRAMECHANGED = 0x0020  # ★ 핵심: OS에게 "창 스타일이 바뀌었으니 캐시 버리고 프레임 다시 계산해"라고 명령
+    
+    flags = SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE | SWP_FRAMECHANGED
+    
+    # 윈도우 OS 내부의 확장 스타일 스타일 장부를 가져옴
+    current_style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+    
+    if is_topmost:
+        # [OS 캐시 강제 무력화 로직]
+        # 1. OS 장부에서 항상 위(TOPMOST) 비트를 완전히 지우고 프레임 갱신 처리
+        ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, current_style & ~WS_EX_TOPMOST)
+        ctypes.windll.user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, flags)
+        
+        # 2. 그 즉시 다시 장부에 항상 위 비트를 새기고 최상단 좌표 스택으로 재주입
+        ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, current_style | WS_EX_TOPMOST)
+        ctypes.windll.user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags)
+    else:
+        ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, current_style & ~WS_EX_TOPMOST)
+        ctypes.windll.user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, flags)
 
 class ZabbixWorker(QThread):
     data_fetched = pyqtSignal(dict)
@@ -569,7 +604,15 @@ class ZabbixWorker(QThread):
                         
                         # ★ 이름이나 성에 한글이 포함되어 있다면 "성+이름" 순서로 붙여서 출력 (김동균)
                         if any('가' <= c <= '힣' for c in name_str + surname_str):
-                            full_name = f"{surname_str}{name_str}"
+                            if len(name_str) == 1 and len(surname_str) == 2:
+                                # 예: 이름="이", 성="성현" 으로 거꾸로 적은 경우 ➔ "이성현"
+                                full_name = f"{name_str}{surname_str}"
+                            elif len(surname_str) == 1 and len(name_str) == 2:
+                                # 예: 이름="성현", 성="이" 로 올바르게 적은 경우 ➔ "이성현"
+                                full_name = f"{surname_str}{name_str}"
+                            else:
+                                # 한쪽 칸에 통째로 적었거나(이성현 / 공백) 외자 이름 등은 순서대로 병합
+                                full_name = f"{surname_str}{name_str}".strip()
                         else: # 영어나 기타 언어면 기존처럼 "이름 성" 유지 (John Smith)
                             full_name = f"{name_str} {surname_str}".strip()
                             
@@ -691,7 +734,7 @@ class BubbleBgFrame(QFrame):
 
 
 # ==========================================
-# 알림창(ToastWidget)
+# 알림창(ToastWidget) - 2026 모던 UI 적용
 # ==========================================
 class ToastWidget(QWidget):
     def __init__(self, text, noti_type, duration, manager):
@@ -702,7 +745,7 @@ class ToastWidget(QWidget):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
-        self.setFixedWidth(350)
+        self.setFixedWidth(360)
         
         self.setWindowOpacity(0.0)
         self.opacity_anim = QVariantAnimation(self)
@@ -713,35 +756,61 @@ class ToastWidget(QWidget):
         self.opacity_anim.start()
         
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setContentsMargins(15, 15, 15, 15)
         
-        border_color = '#E74C3C' if noti_type == 'created' else '#2ECC71' if noti_type == 'resolved' else '#F39C12'
+        is_light = self.manager.config.get("color_mode", "dark") == "light"
         
-        bg = BubbleBgFrame(border_color, self)
-        bg_layout = QHBoxLayout(bg)
-        bg_layout.setContentsMargins(18, 0, 10, 0) 
-        bg_layout.setSpacing(10)
+        border_color = '#EF4444' if noti_type == 'created' else '#10B981' if noti_type == 'resolved' else '#F59E0B'
+        bg_color = "rgba(255, 255, 255, 245)" if is_light else "rgba(28, 28, 32, 245)"
+        border_line = "rgba(0, 0, 0, 0.1)" if is_light else "rgba(255, 255, 255, 0.08)"
+        text_color = "#111827" if is_light else "#F4F4F5"
+        btn_color = "#6B7280" if is_light else "#A1A1AA"
+        btn_hover_bg = "rgba(0, 0, 0, 0.08)" if is_light else "rgba(255, 255, 255, 0.1)"
+        btn_hover_color = "#111827" if is_light else "#F4F4F5"
         
+        self.bg_frame = QFrame()
+        self.bg_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {bg_color};
+                border-radius: 12px;
+                border: 1px solid {border_line};
+                border-left: 4px solid {border_color};
+            }}
+        """)
+        
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(20)
+        shadow.setXOffset(0)
+        shadow.setYOffset(6)
+        shadow.setColor(QColor(0, 0, 0, 70 if is_light else 100))
+        self.bg_frame.setGraphicsEffect(shadow)
+        
+        bg_layout = QHBoxLayout(self.bg_frame)
+        bg_layout.setContentsMargins(16, 12, 12, 12)
+        bg_layout.setSpacing(12)
+        
+        # HTML 태그 색상 무력화를 위해 text 안의 색상을 일괄 교체
+        if is_light:
+            text = text.replace('color: #BDC3C7', 'color: #6B7280').replace('color: #F39C12', 'color: #D97706')
+            
         lbl = QLabel(text)
         lbl.setTextFormat(Qt.RichText)
-        # 폰트 사이즈와 굵기는 변수(text) 안의 HTML 태그가 결정하도록 CSS에서 제거
-        lbl.setStyleSheet("color: white; font-family: 'IBM Plex Sans KR', sans-serif; background: transparent;")
+        lbl.setStyleSheet(f"color: {text_color}; font-family: 'IBM Plex Sans KR', sans-serif; background: transparent; border: none;")
         lbl.setWordWrap(True)
-        lbl.setContentsMargins(0, 12, 0, 12)
         
-        close_btn = QPushButton("❌")
+        close_btn = QPushButton("✕")
         close_btn.setFixedSize(24, 24)
         close_btn.setCursor(Qt.PointingHandCursor)
-        close_btn.setStyleSheet("""
-            QPushButton { color: white; background: transparent; border: none; font-size: 14px; font-family: 'Segoe UI Emoji', 'IBM Plex Sans KR', sans-serif; text-align: center; padding: 0px; margin: 0px; } 
-            QPushButton:hover { background-color: rgba(255, 255, 255, 0.15); border-radius: 4px; }
+        close_btn.setStyleSheet(f"""
+            QPushButton {{ color: {btn_color}; background: transparent; border: none; font-size: 14px; border-radius: 6px; }} 
+            QPushButton:hover {{ background-color: {btn_hover_bg}; color: {btn_hover_color}; }}
         """)
         close_btn.clicked.connect(self.fade_and_close)
         
-        bg_layout.addWidget(lbl, 1) 
+        bg_layout.addWidget(lbl, 1)
         bg_layout.addWidget(close_btn, 0, Qt.AlignTop)
         
-        layout.addWidget(bg)
+        layout.addWidget(self.bg_frame)
         self.adjustSize()
         
         if duration > 0: 
@@ -768,7 +837,13 @@ class ToastWidget(QWidget):
         
     def contextMenuEvent(self, event):
         menu = QMenu(self)
-        menu.setStyleSheet("QMenu { background-color: #FFFFFF; border: 1px solid #C8D0D8; padding: 6px; } QMenu::item { padding: 7px 28px 7px 28px; color: #2C3E50; } QMenu::item:selected { background-color: #E74C3C; color: white; }")
+        is_light = self.manager.config.get("color_mode", "dark") == "light"
+        
+        bg_color = "#FFFFFF" if is_light else "#1C1C20"
+        text_color = "#2C3E50" if is_light else "#F4F4F5"
+        border_color = "#C8D0D8" if is_light else "#3F3F46"
+        
+        menu.setStyleSheet(f"QMenu {{ background-color: {bg_color}; border: 1px solid {border_color}; padding: 6px; border-radius: 6px; }} QMenu::item {{ padding: 7px 28px 7px 28px; color: {text_color}; }} QMenu::item:selected {{ background-color: #EF4444; color: white; border-radius: 4px; }}")
         
         act_close_all = QAction(tr("menu_clear_all", "🧹 알림 일괄 삭제"), self)
         act_close_all.triggered.connect(self.manager.clear_all)
@@ -839,14 +914,38 @@ class AlertListWindow(QWidget):
         self._drag_start_pos = QPoint()
         self.config = config
         self.owner_window = owner_window
+        self.hex_color = hex_color
+        
+        self.is_light = self.config.get("color_mode", "dark") == "light"
 
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setContentsMargins(15, 15, 15, 15)
 
         self.bg_widget = QWidget()
         self.bg_widget.setObjectName("alertBgWidget")
-        self.bg_widget.setStyleSheet(f"QWidget#alertBgWidget {{ background-color: #2C3E50; border-radius: 12px; border: 2px solid {hex_color}; }}")
+        
+        # ★ 핵심: 여기서 배경색과 테두리 선 색상이 모드에 따라 바뀌어야 합니다!
+        bg_color = "rgba(255, 255, 255, 245)" if self.is_light else "rgba(28, 28, 32, 245)"
+        border_color = "rgba(0, 0, 0, 0.1)" if self.is_light else "rgba(255, 255, 255, 0.1)"
+        
+        self.bg_widget.setStyleSheet(f"""
+            QWidget#alertBgWidget {{ 
+                background-color: {bg_color}; 
+                border-radius: 16px; 
+                border: 1px solid {border_color}; 
+                border-top: 3px solid {hex_color};
+            }}
+        """)
+        
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(20)
+        shadow.setXOffset(0)
+        shadow.setYOffset(8)
+        shadow.setColor(QColor(0, 0, 0, 70 if self.is_light else 120))
+        self.bg_widget.setGraphicsEffect(shadow)
+
         bg_layout = QVBoxLayout(self.bg_widget)
+        bg_layout.setContentsMargins(14, 14, 14, 14)
 
         header_layout = QHBoxLayout()
         self.problems_list = problems_list
@@ -856,63 +955,49 @@ class AlertListWindow(QWidget):
 
         self.title = title
         self.title_lbl = QLabel()
-        self.title_lbl.setStyleSheet(f"color: {hex_color}; font-weight: bold; font-size: 14px; border: none;")
+        self.title_lbl.setStyleSheet(f"color: {hex_color}; font-weight: bold; font-size: 15px; border: none; background: transparent; font-family: 'IBM Plex Sans KR', sans-serif;")
 
-        # 1. 이전 페이지 버튼
-        self.prev_btn = QPushButton("⬅️")
-        self.prev_btn.setFixedSize(24, 24)
+        btn_c = "#4B5563" if self.is_light else "#A1A1AA"
+        btn_hover_bg = "rgba(0, 0, 0, 0.08)" if self.is_light else "rgba(255, 255, 255, 0.1)"
+        btn_hover_c = "#111827" if self.is_light else "#F4F4F5"
+
+        modern_btn_style = f"""
+            QPushButton {{ color: {btn_c}; background: transparent; border: none; font-size: 16px; font-weight: bold; border-radius: 6px; padding: 2px 6px; font-family: Arial, sans-serif; }} 
+            QPushButton:hover {{ background-color: {btn_hover_bg}; color: {btn_hover_c}; }}
+        """
+
+        self.prev_btn = QPushButton("‹")
+        self.prev_btn.setFixedSize(28, 28)
         self.prev_btn.setCursor(Qt.PointingHandCursor)
-        
-        # ★ 추가됨: 버튼을 숨겨도 레이아웃(빈 공간)은 유지해서 글자가 움직이지 않게 고정
         sp_prev = self.prev_btn.sizePolicy()
         sp_prev.setRetainSizeWhenHidden(True)
         self.prev_btn.setSizePolicy(sp_prev)
-        
-        self.prev_btn.setStyleSheet("""
-            QPushButton { color: white; background: transparent; border: none; font-size: 14px; font-family: 'Segoe UI Emoji', 'IBM Plex Sans KR', sans-serif; text-align: center; padding: 0px; margin: 0px; } 
-            QPushButton:hover { background-color: rgba(255, 255, 255, 0.15); border-radius: 4px; }
-        """)
+        self.prev_btn.setStyleSheet(modern_btn_style)
         self.prev_btn.clicked.connect(self.go_prev_page)
 
-        # 페이지 번호 라벨 (유지)
         self.page_lbl = QLabel()
-        self.page_lbl.setStyleSheet("color: #ECF0F1; font-size: 12px; border: none; font-family: 'IBM Plex Sans KR', sans-serif;")
+        self.page_lbl.setStyleSheet(f"color: {btn_c}; font-size: 12px; border: none; background: transparent; font-family: 'IBM Plex Sans KR', sans-serif;")
 
-        # 2. 다음 페이지 버튼
-        self.next_btn = QPushButton("➡️")
-        self.next_btn.setFixedSize(24, 24)
+        self.next_btn = QPushButton("›")
+        self.next_btn.setFixedSize(28, 28)
         self.next_btn.setCursor(Qt.PointingHandCursor)
-        
-        # ★ 추가됨: 버튼을 숨겨도 레이아웃(빈 공간)은 유지
         sp_next = self.next_btn.sizePolicy()
         sp_next.setRetainSizeWhenHidden(True)
         self.next_btn.setSizePolicy(sp_next)
-        
-        self.next_btn.setStyleSheet("""
-            QPushButton { color: white; background: transparent; border: none; font-size: 14px; font-family: 'Segoe UI Emoji', 'IBM Plex Sans KR', sans-serif; text-align: center; padding: 0px; margin: 0px; } 
-            QPushButton:hover { background-color: rgba(255, 255, 255, 0.15); border-radius: 4px; }
-        """)
+        self.next_btn.setStyleSheet(modern_btn_style)
         self.next_btn.clicked.connect(self.go_next_page)
 
-        # 3. 새로고침 버튼
-        self.refresh_btn = QPushButton("🔄")
-        self.refresh_btn.setFixedSize(24, 24)
+        self.refresh_btn = QPushButton("↻")
+        self.refresh_btn.setFixedSize(28, 28)
         self.refresh_btn.setCursor(Qt.PointingHandCursor)
         self.refresh_btn.setToolTip("새로고침")
-        self.refresh_btn.setStyleSheet("""
-            QPushButton { color: white; background: transparent; border: none; font-size: 14px; font-family: 'Segoe UI Emoji', 'IBM Plex Sans KR', sans-serif; text-align: center; padding: 0px; margin: 0px; } 
-            QPushButton:hover { background-color: rgba(255, 255, 255, 0.15); border-radius: 4px; }
-        """)
+        self.refresh_btn.setStyleSheet(modern_btn_style)
         self.refresh_btn.clicked.connect(self.reload_from_server)
 
-        # 4. 닫기 버튼
-        close_btn = QPushButton("❌")
-        close_btn.setFixedSize(24, 24)
+        close_btn = QPushButton("✕")
+        close_btn.setFixedSize(28, 28)
         close_btn.setCursor(Qt.PointingHandCursor)
-        close_btn.setStyleSheet("""
-            QPushButton { color: white; background: transparent; border: none; font-size: 14px; font-family: 'Segoe UI Emoji', 'IBM Plex Sans KR', sans-serif; text-align: center; padding: 0px; margin: 0px; } 
-            QPushButton:hover { background-color: rgba(255, 255, 255, 0.15); border-radius: 4px; }
-        """)
+        close_btn.setStyleSheet(modern_btn_style.replace(btn_hover_bg, "rgba(239, 68, 68, 0.15)").replace(btn_hover_c, "#EF4444"))
         close_btn.clicked.connect(self.close)
 
         header_layout.addWidget(self.title_lbl)
@@ -930,15 +1015,26 @@ class AlertListWindow(QWidget):
         self.list_widget.setSelectionMode(QListWidget.NoSelection)
         self.list_widget.viewport().installEventFilter(self)
         self.list_widget.setWordWrap(True)
-        self.list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # ★ 수정됨: 스크롤바 정책을 '항상 끔'에서 '필요 시 표시(AsNeeded)'로 변경
+        self.list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.list_widget.itemDoubleClicked.connect(self.open_issue_editor)
 
-        self.list_widget.setStyleSheet("""
-            QListWidget { background-color: transparent; color: #ECF0F1; border: none; font-size: 12px; outline: none; }
-            QListWidget::item { padding: 0px; margin: 0px; background-color: transparent; border: none; }
-            QListWidget::item:hover { background-color: transparent; border: none; } 
-            QListWidget::item:selected { background-color: transparent; border: none; color: #ECF0F1; }
+        # ★ 추가됨: 다크/라이트 모드에 맞춘 반투명 스크롤바 색상 변수 설정
+        scroll_handle_bg = "rgba(0, 0, 0, 0.2)" if self.is_light else "rgba(255, 255, 255, 0.2)"
+        scroll_handle_hover = "rgba(0, 0, 0, 0.4)" if self.is_light else "rgba(255, 255, 255, 0.4)"
+
+        # ★ 수정됨: QListWidget 스크롤바(QScrollBar) 디자인 추가
+        self.list_widget.setStyleSheet(f"""
+            QListWidget {{ background-color: transparent; border: none; outline: none; }}
+            QListWidget::item {{ padding: 2px 0px; margin: 0px; background-color: transparent; border: none; }}
+            
+            /* 모던 반투명 스크롤바 디자인 */
+            QScrollBar:vertical {{ background: transparent; width: 6px; margin: 2px 2px 2px 0px; }}
+            QScrollBar::handle:vertical {{ background: {scroll_handle_bg}; min-height: 30px; border-radius: 3px; }}
+            QScrollBar::handle:vertical:hover {{ background: {scroll_handle_hover}; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; border: none; background: none; }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
         """)
 
         bg_layout.addLayout(header_layout)
@@ -948,56 +1044,71 @@ class AlertListWindow(QWidget):
         self.refresh_page()
 
     def create_issue_item_widget(self, issue_data):
-        row_widget = QWidget()
-        row_widget.setStyleSheet("background-color: transparent; border: none;")
-        outer_layout = QVBoxLayout(row_widget)
-        outer_layout.setContentsMargins(10, 8, 10, 8) 
+        card_widget = QWidget()
         
-        content_layout = QHBoxLayout()
-        left_box = QVBoxLayout()
-        left_box.setSpacing(4) 
-        left_box.setContentsMargins(0,0,0,0)
+        card_bg = "rgba(0, 0, 0, 0.03)" if self.is_light else "rgba(255, 255, 255, 0.04)"
+        card_hover = "rgba(0, 0, 0, 0.06)" if self.is_light else "rgba(255, 255, 255, 0.08)"
+        title_color = "#111827" if self.is_light else "#F4F4F5"
+        content_color = "#6B7280" if self.is_light else "#A1A1AA"
+        time_color = "#9CA3AF" if self.is_light else "#71717A"
         
-        # ★ 수정됨: 제목과 내용의 디자인(색상, 크기)을 분리하여 가독성 극대화
-        content = issue_data.get('opdata', '').strip()
+        card_widget.setStyleSheet(f"""
+            QWidget {{ background-color: {card_bg}; border-radius: 10px; }}
+            QWidget:hover {{ background-color: {card_hover}; }}
+        """)
         
-        # HTML 태그 충돌 방지 처리
+        outer_layout = QVBoxLayout(card_widget)
+        outer_layout.setContentsMargins(12, 12, 12, 12) 
+        outer_layout.setSpacing(6)
+        
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        
+        dot_lbl = QLabel("●")
+        dot_lbl.setStyleSheet(f"color: {self.hex_color}; font-size: 11px; background: transparent; border: none;")
+        dot_lbl.setFixedWidth(16)
+        
         safe_title = issue_data['name'].replace('<', '&lt;').replace('>', '&gt;')
+        title_lbl = QLabel(f"<span style='font-family: \"IBM Plex Sans KR\", sans-serif; color: {title_color}; font-size: 13px; font-weight: bold;'>{safe_title}</span>")
+        title_lbl.setStyleSheet("background: transparent; border: none;")
+        title_lbl.setWordWrap(True)
         
+        header_layout.addWidget(dot_lbl, 0, Qt.AlignTop)
+        header_layout.addWidget(title_lbl, 1)
+        outer_layout.addLayout(header_layout)
+        
+        content = issue_data.get('opdata', '').strip()
         if content:
             safe_content = content.replace('<', '&lt;').replace('>', '&gt;').replace('\n', '<br>')
-            display_text = f"<span style='font-family: \"IBM Plex Sans KR\", sans-serif; color: #ECF0F1; font-size: 12px;'>🚨 {safe_title}</span><br><span style='font-family: \"IBM Plex Sans KR\", sans-serif; color: #95A5A6; font-size: 11px;'>💡 {safe_content}</span>"
-        else:
-            display_text = f"<span style='font-family: \"IBM Plex Sans KR\", sans-serif; color: #ECF0F1; font-size: 12px;'>🚨 {safe_title}</span>"
+            content_lbl = QLabel(f"<span style='font-family: \"IBM Plex Sans KR\", sans-serif; color: {content_color}; font-size: 12px;'>{safe_content}</span>")
+            content_lbl.setStyleSheet("background: transparent; border: none;")
+            content_lbl.setWordWrap(True)
+            content_lbl.setContentsMargins(20, 0, 0, 0)
+            outer_layout.addWidget(content_lbl)
             
-        name_lbl = QLabel(display_text)
-        name_lbl.setStyleSheet("border: none; background: transparent; font-family: 'IBM Plex Sans KR', sans-serif;")
-        name_lbl.setWordWrap(True)
+        footer_layout = QHBoxLayout()
+        footer_layout.setContentsMargins(20, 4, 0, 0)
         
-        time_lbl = QLabel(f"{tr('lbl_occurred', '발생:')} {issue_data['time']}")
-        time_lbl.setStyleSheet("color: #D0D7DE; font-size: 11px; border: none; background: transparent; font-family: 'IBM Plex Sans KR', sans-serif;")
+        time_lbl = QLabel(issue_data['time'])
+        time_lbl.setStyleSheet(f"color: {time_color}; font-size: 11px; border: none; background: transparent; font-family: 'IBM Plex Sans KR', sans-serif;")
         
-        left_box.addWidget(name_lbl)
-        left_box.addWidget(time_lbl)
-        left_wrap = QWidget()
-        left_wrap.setLayout(left_box)
+        footer_layout.addWidget(time_lbl)
+        footer_layout.addStretch()
         
-        right_lbl = QLabel()
         if str(issue_data.get("acknowledged", "0")) == "1":
-            right_lbl.setText("☑")
-            right_lbl.setStyleSheet("color: #2ECC71; font-size: 16px; border: none; background: transparent;")
-        right_lbl.setFixedWidth(24)
+            ack_lbl = QLabel("✓")
+            ack_lbl.setStyleSheet("color: #10B981; font-size: 14px; font-weight: bold; background: transparent; border: none;")
+            footer_layout.addWidget(ack_lbl)
+            
+        outer_layout.addLayout(footer_layout)
         
-        content_layout.addWidget(left_wrap, 1)
-        content_layout.addWidget(right_lbl, 0, Qt.AlignVCenter)
+        wrapper = QWidget()
+        wrapper.setStyleSheet("background: transparent; border: none;")
+        wrapper_layout = QVBoxLayout(wrapper)
+        wrapper_layout.setContentsMargins(4, 4, 4, 4)
+        wrapper_layout.addWidget(card_widget)
         
-        line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setStyleSheet("background-color: #4A6072; min-height: 1px; max-height: 1px; border: none;")
-        
-        outer_layout.addLayout(content_layout)
-        outer_layout.addWidget(line)
-        return row_widget
+        return wrapper
 
     def eventFilter(self, obj, event):
         if obj == self.list_widget.viewport() and event.type() == QEvent.Leave:
@@ -1018,10 +1129,9 @@ class AlertListWindow(QWidget):
         
         self.prev_btn.setVisible(self.current_page > 0)
         self.next_btn.setVisible(self.current_page < self.total_pages - 1)
-        
         self.page_lbl.setVisible(self.total_pages > 1)
         
-        total_height = 52 + 20 
+        total_height = 52 + 28 # 헤더 높이 + 컨테이너 패딩
         
         if not page_items:
             item = QListWidgetItem(tr("msg_no_issues", "✅ 현재 발생한 미해결 내역이 없습니다."))
@@ -1032,7 +1142,7 @@ class AlertListWindow(QWidget):
         else:
             font = QFont()
             if CUSTOM_FONT_FAMILY: font.setFamily(CUSTOM_FONT_FAMILY)
-            font.setPixelSize(12)
+            font.setPixelSize(13)
             fm = QFontMetrics(font)
             
             for p in page_items:
@@ -1040,22 +1150,20 @@ class AlertListWindow(QWidget):
                 item.setData(Qt.UserRole, p)
                 widget = self.create_issue_item_widget(p)
                 
-                #💡 내용까지 모두 합쳐서 실제 표시되는 텍스트 길이를 측정
                 content = p.get('opdata', '').strip()
-                name_text = f"🚨 {p['name']}\n💡 {content}" if content else f"🚨 {p['name']}"
+                name_text = f"● {p['name']}\n{content}" if content else f"● {p['name']}"
                 
-                # 너비(330) 기준으로 텍스트가 차지하는 높이를 정확하게 계산
-                rect = fm.boundingRect(0, 0, 330, 2000, Qt.TextWordWrap | Qt.AlignLeft, name_text)
+                rect = fm.boundingRect(0, 0, 310, 2000, Qt.TextWordWrap | Qt.AlignLeft, name_text)
                 
-                # 여백을 +55로 살짝 더 넉넉하게 주어 짤림 방지
-                calc_height = max(70, rect.height() + 55)
+                # 🛠 카드 디자인 적용으로 상하 여백이 늘어났으므로 넉넉하게 높이 계산 (+85)
+                calc_height = max(85, rect.height() + 85)
                 
                 item.setSizeHint(QSize(0, calc_height))
                 self.list_widget.addItem(item)
                 self.list_widget.setItemWidget(item, widget)
                 total_height += calc_height
 
-        self.resize(420, max(140, total_height))
+        self.resize(440, max(150, total_height)) # 창 너비도 살짝 넓혀 가독성 향상
 
     def go_prev_page(self):
         if self.current_page > 0:
@@ -1148,49 +1256,73 @@ class IssueActionDialog(QDialog):
     def __init__(self, issue_data, parent=None):
         super().__init__(parent)
         self.issue_data = issue_data
+        self.config = self.parent().config if self.parent() and hasattr(self.parent(), 'config') else {}
+        self.is_light = self.config.get("color_mode", "dark") == "light"
+        
         self.setWindowTitle(tr("title_issue_info", "장애 정보"))
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint) # ★ 추가됨: '?' 버튼 제거
-        self.resize(600, 450)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint) 
+        
+        # ★ 수정 1: 탭 전환 시 창이 울렁거리지 않도록 넉넉한 크기로 강제 고정
+        self.setFixedSize(760, 540)
+
+        # 🎨 모드에 따른 색상 동적 할당
+        bg_color = "#F9FAFB" if self.is_light else "#1C1C20"
+        text_color = "#111827" if self.is_light else "#F4F4F5"
+        pane_bg = "#FFFFFF" if self.is_light else "#2A2A30"
+        border_color = "#D1D5DB" if self.is_light else "#3F3F46"
+        input_bg = "#FFFFFF" if self.is_light else "#18181B"
+        tab_bg = "#E5E7EB" if self.is_light else "#18181B"
+        tab_sel_bg = "#FFFFFF" if self.is_light else "#2A2A30"
+        tab_sel_color = "#2563EB" if self.is_light else "#60A5FA"
+        scroll_bg = "#D1D5DB" if self.is_light else "#3F3F46"
+        scroll_hover = "#9CA3AF" if self.is_light else "#52525B"
+        dim_text = "#6B7280" if self.is_light else "#A1A1AA"
 
         arrow_url = get_arrow_path()
-        self.setStyleSheet("""
-            QDialog { background-color: #FFFFFF; font-family: 'IBM Plex Sans KR', sans-serif; font-size: 12px; color: #2C3E50; }
-            QTabWidget::pane { border: 1px solid #C8D0D8; border-radius: 4px; background: #FFFFFF; }
-            QTabBar::tab { background: #F8F9FA; border: 1px solid #C8D0D8; border-bottom: none; padding: 6px 15px; margin-right: 2px; border-top-left-radius: 4px; border-top-right-radius: 4px; color: #2C3E50; }
-            QTabBar::tab:selected { background: #FFFFFF; color: #3498DB; border-bottom: 1px solid #FFFFFF; }
-            QPlainTextEdit, QComboBox { background-color: #F8F9FA; border: 1px solid #C8D0D8; border-radius: 4px; padding: 4px; }
+        
+        # ★ 수정 2: QTabBar::tab 에 min-width: 140px; 를 추가하여 글자 잘림 방지
+        self.setStyleSheet(f"""
+            QDialog {{ background-color: {bg_color}; font-family: 'IBM Plex Sans KR', sans-serif; font-size: 13px; color: {text_color}; }}
             
-            /* ★ 콤보박스 화살표 복구 (자동 생성된 PNG 이미지 활용) */
-            QComboBox::drop-down { 
-                subcontrol-origin: padding;
-                subcontrol-position: top right;
-                width: 24px;
-                border-left-width: 0px;
-            }
-            QComboBox::down-arrow { 
-                image: url('""" + arrow_url + """');
-                width: 16px; height: 16px;
-            }
-            QComboBox QAbstractItemView { background-color: #FFFFFF; selection-background-color: #E5E7EB; selection-color: #2C3E50; outline: none; border: 1px solid #C8D0D8; }
+            /* ★ QCheckBox:disabled 속성 추가로 비활성화 시 글자색을 흐리게 만듦 */
+            QLabel, QCheckBox {{ color: {text_color}; }}
+            QCheckBox:disabled {{ color: {dim_text}; }}
             
-            QPushButton { padding: 4px 10px; border: 1px solid #C8D0D8; border-radius: 4px; background-color: #FFFFFF; color: #2C3E50; } 
-            QPushButton:hover { background-color: #E5E7EB; }
+            /* 탭 디자인 */
+            QTabWidget::pane {{ border: 1px solid {border_color}; border-radius: 8px; background: {pane_bg}; padding: 4px; }}
+            QTabBar::tab {{ background: {tab_bg}; border: 1px solid {border_color}; border-bottom: none; padding: 8px 0px; min-width: 140px; margin-right: 4px; border-top-left-radius: 8px; border-top-right-radius: 8px; color: {dim_text}; font-weight: bold; }}
+            QTabBar::tab:selected {{ background: {tab_sel_bg}; color: {tab_sel_color}; border-bottom: 2px solid {tab_sel_color}; }}
+            QTabBar::tab:hover:!selected {{ background: {border_color}; }}
             
-            /* ★ Windows 11 스타일 스크롤바 커스텀 */
-            QScrollBar:vertical { background: transparent; width: 10px; margin: 0px; }
-            QScrollBar::handle:vertical { background: #E0E0E0; min-height: 30px; border-radius: 5px; margin: 2px; }
-            QScrollBar::handle:vertical:hover { background: #C0C0C0; }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; border: none; background: none; }
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
+            /* 입력창 디자인 */
+            QPlainTextEdit, QComboBox {{ background-color: {input_bg}; color: {text_color}; border: 1px solid {border_color}; border-radius: 6px; padding: 6px; outline: none; }}
+            QPlainTextEdit:focus, QComboBox:focus {{ border: 1px solid {tab_sel_color}; }}
             
-            QScrollBar:horizontal { background: transparent; height: 10px; margin: 0px; }
-            QScrollBar::handle:horizontal { background: #E0E0E0; min-width: 30px; border-radius: 5px; margin: 2px; }
-            QScrollBar::handle:horizontal:hover { background: #C0C0C0; }
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; border: none; background: none; }
-            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: none; }
+            /* 콤보박스 디자인 */
+            QComboBox::drop-down {{ subcontrol-origin: padding; subcontrol-position: top right; width: 24px; border-left-width: 0px; }}
+            QComboBox::down-arrow {{ image: url('{arrow_url}'); width: 16px; height: 16px; }}
+            QComboBox QAbstractItemView {{ background-color: {pane_bg}; color: {text_color}; selection-background-color: {border_color}; selection-color: {text_color}; outline: none; border: 1px solid {border_color}; border-radius: 6px; padding: 4px; }}
+            
+            /* 일반 버튼 디자인 */
+            QPushButton {{ padding: 6px 14px; border: 1px solid {border_color}; border-radius: 6px; background-color: {pane_bg}; color: {text_color}; font-weight: bold; }} 
+            QPushButton:hover {{ background-color: {border_color}; }}
+            
+            /* 스크롤바 디자인 */
+            QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0px; }}
+            QScrollBar::handle:vertical {{ background: {scroll_bg}; min-height: 30px; border-radius: 5px; margin: 2px; }}
+            QScrollBar::handle:vertical:hover {{ background: {scroll_hover}; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; border: none; background: none; }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
+            
+            QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 0px; }}
+            QScrollBar::handle:horizontal {{ background: {scroll_bg}; min-width: 30px; border-radius: 5px; margin: 2px; }}
+            QScrollBar::handle:horizontal:hover {{ background: {scroll_hover}; }}
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0px; border: none; background: none; }}
+            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background: none; }}
         """)
 
         main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(16, 16, 16, 16)
         self.tabs = QTabWidget()
         
         # -----------------------------------
@@ -1199,6 +1331,8 @@ class IssueActionDialog(QDialog):
         self.tab_update = QWidget()
         layout_update = QFormLayout(self.tab_update)
         layout_update.setLabelAlignment(Qt.AlignTop) 
+        layout_update.setContentsMargins(16, 16, 16, 16)
+        layout_update.setSpacing(12)
         
         self.message_edit = QPlainTextEdit()
         
@@ -1213,12 +1347,15 @@ class IssueActionDialog(QDialog):
         self.close_check = QCheckBox(tr("lbl_close", "장애 클로즈"))
         if str(issue_data.get("manual_close", "0")) == "0":
             self.close_check.setEnabled(False)
+            # ★ 추가됨: 비활성화된 이유를 사용자가 즉시 알 수 있도록 텍스트 추가
+            self.close_check.setText(self.close_check.text() + " (수동 클로즈 불가)")
             self.close_check.setToolTip(tr("msg_manual_close_denied", "Zabbix 설정에서 수동 클로즈가 허용되지 않은 장애입니다."))
 
         issue_name_lbl = QLabel(issue_data.get("name", ""))
         issue_name_lbl.setWordWrap(True) 
         issue_name_lbl.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        issue_name_lbl.setMinimumWidth(600) 
+        issue_name_lbl.setMinimumWidth(500)
+        issue_name_lbl.setStyleSheet(f"font-weight: bold; color: {text_color};")
         
         layout_update.addRow(tr("lbl_issue", "이슈"), issue_name_lbl)
         layout_update.addRow(tr("lbl_message", "메시지"), self.message_edit)
@@ -1228,22 +1365,25 @@ class IssueActionDialog(QDialog):
         self.tabs.addTab(self.tab_update, tr("tab_update", "업데이트"))
         
         # -----------------------------------
-        # [2] 히스토리 탭 (기간 선택 및 다중 아이템 선택 지원)
+        # [2] 히스토리 탭
         # -----------------------------------
         self.tab_history = QWidget()
         layout_history = QVBoxLayout(self.tab_history)
+        layout_history.setContentsMargins(12, 12, 12, 12)
         
         history_header = QHBoxLayout()
         
         self.item_combo = QComboBox()
-        self.item_combo.setMinimumWidth(200) 
+        # ★ 수정 3: 빈 공간이 생기면 콤보박스가 알아서 늘어나도록 설정 (창 팽창 방지)
+        self.item_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.item_combo.setMinimumWidth(150) 
         self.item_combo.currentIndexChanged.connect(self.on_history_filter_changed)
-        history_header.addWidget(self.item_combo)
+        history_header.addWidget(self.item_combo, 1) # 빈 공간을 콤보박스가 채움
 
-        history_header.addStretch() 
+        # (기존에 있던 addStretch()는 삭제됨)
         
         self.time_range_lbl = QLabel()
-        self.time_range_lbl.setStyleSheet("color: #7F8C8D; font-size: 11px; margin-right: 10px;")
+        self.time_range_lbl.setStyleSheet(f"color: {dim_text}; font-size: 11px; margin-left: 15px; margin-right: 15px;")
         history_header.addWidget(self.time_range_lbl)
 
         self.time_combo = QComboBox()
@@ -1266,17 +1406,18 @@ class IssueActionDialog(QDialog):
         layout_history.addLayout(history_header)
 
         self.history_browser = QTextBrowser()
-        self.history_browser.setStyleSheet("background-color: #F8F9FA; border: 1px solid #C8D0D8;")
-        self.history_browser.setHtml(f"<p style='color: gray; margin: 10px;'>{tr('lbl_loading_data', '데이터를 불러오는 중입니다...')}</p>")
+        self.history_browser.setStyleSheet(f"background-color: {pane_bg}; border: 1px solid {border_color}; border-radius: 6px;")
+        self.history_browser.setHtml(f"<p style='color: {dim_text}; margin: 10px;'>{tr('lbl_loading_data', '데이터를 불러오는 중입니다...')}</p>")
         layout_history.addWidget(self.history_browser)
         
         self.tabs.addTab(self.tab_history, tr("tab_history", "히스토리"))
         
         # -----------------------------------
-        # [3] 메시지 로그 탭 (다른 사용자가 남긴 메시지)
+        # [3] 메시지 로그 탭
         # -----------------------------------
         self.tab_log = QWidget()
         layout_log = QVBoxLayout(self.tab_log)
+        layout_log.setContentsMargins(12, 12, 12, 12)
         
         log_header = QHBoxLayout()
         log_header.addStretch() 
@@ -1287,7 +1428,7 @@ class IssueActionDialog(QDialog):
         layout_log.addLayout(log_header)
 
         self.log_browser = QTextBrowser()
-        self.log_browser.setStyleSheet("background-color: #F8F9FA; border: 1px solid #C8D0D8;")
+        self.log_browser.setStyleSheet(f"background-color: {pane_bg}; border: 1px solid {border_color}; border-radius: 6px;")
         layout_log.addWidget(self.log_browser)
         
         self.tabs.addTab(self.tab_log, tr("tab_log", "메시지 로그"))
@@ -1297,18 +1438,24 @@ class IssueActionDialog(QDialog):
         
         QTimer.singleShot(100, self.refresh_history_data)
         
-        # ★ 수정됨: 윈도우 기본 회색 버튼을 지우고 파란색(확인), 빨간색(취소) 커스텀 버튼으로 교체
+        # 하단 확인/취소 버튼 영역
         btn_layout = QHBoxLayout()
+        btn_layout.setContentsMargins(0, 8, 0, 0)
         btn_layout.addStretch()
 
+        # 모던한 Blue, Red 색상 버튼 적용
         self.btn_ok = QPushButton(tr("btn_ok", "확인"))
         self.btn_ok.setCursor(Qt.PointingHandCursor)
-        self.btn_ok.setStyleSheet("QPushButton { padding: 6px 20px; background-color: #3498DB; color: white; border: none; border-radius: 4px; font-weight: bold; font-family: 'IBM Plex Sans KR', sans-serif; } QPushButton:hover { background-color: #2980B9; }")
+        ok_bg = "#3B82F6" if self.is_light else "#2563EB"
+        ok_hover = "#2563EB" if self.is_light else "#1D4ED8"
+        self.btn_ok.setStyleSheet(f"QPushButton {{ padding: 8px 24px; background-color: {ok_bg}; color: white; border: none; border-radius: 6px; font-weight: bold; font-family: 'IBM Plex Sans KR', sans-serif; }} QPushButton:hover {{ background-color: {ok_hover}; }}")
         self.btn_ok.clicked.connect(self.accept)
 
         self.btn_cancel = QPushButton(tr("btn_cancel", "취소"))
         self.btn_cancel.setCursor(Qt.PointingHandCursor)
-        self.btn_cancel.setStyleSheet("QPushButton { padding: 6px 20px; background-color: #E74C3C; color: white; border: none; border-radius: 4px; font-weight: bold; font-family: 'IBM Plex Sans KR', sans-serif; } QPushButton:hover { background-color: #C0392B; }")
+        can_bg = "#EF4444" if self.is_light else "#DC2626"
+        can_hover = "#DC2626" if self.is_light else "#B91C1C"
+        self.btn_cancel.setStyleSheet(f"QPushButton {{ padding: 8px 24px; background-color: {can_bg}; color: white; border: none; border-radius: 6px; font-weight: bold; font-family: 'IBM Plex Sans KR', sans-serif; }} QPushButton:hover {{ background-color: {can_hover}; }}")
         self.btn_cancel.clicked.connect(self.reject)
 
         btn_layout.addWidget(self.btn_ok)
@@ -1324,24 +1471,27 @@ class IssueActionDialog(QDialog):
         }
         
     def on_history_filter_changed(self):
-        if self.item_combo.count() == 0:
-            return
+        if self.item_combo.count() == 0: return
         self.refresh_history_data()
 
     def refresh_history_data(self):
-        logger.debug(tr_log("[UI 액션] 장애 히스토리 탭 조회/새로고침", "[UI Action] Issue history tab view/refresh"))
         self.btn_refresh_history.setText(tr("msg_refreshing", "⏳ 새로고침 중..."))
         self.btn_refresh_history.setEnabled(False)
         self.item_combo.setEnabled(False)
         self.time_combo.setEnabled(False)
         QApplication.processEvents()
         
+        # HTML 내부 색상 변수 지정
+        text_c = "#374151" if self.is_light else "#E4E4E7"
+        date_c = "#2563EB" if self.is_light else "#60A5FA"
+        dim_c = "#6B7280" if self.is_light else "#A1A1AA"
+        err_c = "#EF4444" if self.is_light else "#F87171"
+        line_c = "#E5E7EB" if self.is_light else "#3F3F46"
+
         try:
-            config = self.parent().config
             objectid = self.issue_data.get("objectid") 
-            
             if not objectid:
-                self.history_browser.setHtml("<p style='color: #E74C3C; margin: 10px;'>이력을 조회할 수 있는 식별자가 없습니다.</p>")
+                self.history_browser.setHtml(f"<p style='color: {err_c}; margin: 10px;'>이력을 조회할 수 있는 식별자가 없습니다.</p>")
                 return
 
             if self.item_combo.count() == 0:
@@ -1350,10 +1500,10 @@ class IssueActionDialog(QDialog):
                     "triggerids": [objectid],
                     "selectItems": ["itemid", "value_type", "name"]
                 }
-                triggers = zabbix_api_call(config, "trigger.get", trigger_params)
+                triggers = zabbix_api_call(self.config, "trigger.get", trigger_params)
                 
                 if not triggers or not triggers[0].get("items"):
-                    self.history_browser.setHtml("<p style='color: gray; margin: 10px;'>연결된 아이템 정보를 찾을 수 없습니다.</p>")
+                    self.history_browser.setHtml(f"<p style='color: {dim_c}; margin: 10px;'>연결된 아이템 정보를 찾을 수 없습니다.</p>")
                     return
                     
                 self.item_combo.blockSignals(True)
@@ -1362,8 +1512,7 @@ class IssueActionDialog(QDialog):
                 self.item_combo.blockSignals(False)
             
             selected_item_data = self.item_combo.currentData()
-            if not selected_item_data:
-                return
+            if not selected_item_data: return
                 
             itemid, value_type = selected_item_data
             item_name = self.item_combo.currentText()
@@ -1385,27 +1534,26 @@ class IssueActionDialog(QDialog):
                 "sortorder": "DESC",
                 "limit": 100 
             }
-            histories = zabbix_api_call(config, "history.get", history_params)
+            histories = zabbix_api_call(self.config, "history.get", history_params)
             
             if not histories:
-                self.history_browser.setHtml(f"<p style='color: gray; margin: 10px;'>[{item_name}] 아이템의 해당 기간({self.time_combo.currentText()}) 내 데이터가 없습니다.</p>")
+                self.history_browser.setHtml(f"<p style='color: {dim_c}; margin: 14px;'>[{item_name}] 아이템의 해당 기간({self.time_combo.currentText()}) 내 데이터가 없습니다.</p>")
             else:
-                html = f"<div style='margin: 10px;'>"
-                
+                html = "<div style='margin: 10px;'>"
                 for h in histories:
                     dt = datetime.fromtimestamp(int(h["clock"])).strftime('%Y-%m-%d %H:%M:%S')
                     value = h.get("value", "").replace('<', '&lt;').replace('>', '&gt;').replace('\n', '<br>')
                     
                     html += f"<div style='margin-bottom: 12px;'>"
-                    html += f"<span style='color: #2980B9; font-weight: bold; font-size: 11px;'>[{dt}]</span><br>"
-                    html += f"<span style='color: #2C3E50; font-size: 12px; font-family: Consolas, monospace;'>{value}</span>"
-                    html += f"</div><hr style='border: 0; border-top: 1px dashed #E5E7EB;'>"
+                    html += f"<span style='color: {date_c}; font-weight: bold; font-size: 12px;'>[{dt}]</span><br>"
+                    html += f"<span style='color: {text_c}; font-size: 13px; font-family: Consolas, monospace;'>{value}</span>"
+                    html += f"</div><hr style='border: 0; border-top: 1px dashed {line_c};'>"
                     
                 html += "</div>"
                 self.history_browser.setHtml(html)
                 
         except Exception as e:
-            self.history_browser.setHtml(f"<p style='color: red; margin: 10px;'>오류 발생: {e}</p>")
+            self.history_browser.setHtml(f"<p style='color: {err_c}; margin: 10px;'>오류 발생: {e}</p>")
         finally:
             self.btn_refresh_history.setText(tr("btn_refresh", "🔄 새로고침"))
             self.btn_refresh_history.setEnabled(True)
@@ -1416,40 +1564,41 @@ class IssueActionDialog(QDialog):
         valid_acks = [ack for ack in acks if ack.get("message", "").strip()]
         self.tabs.setTabText(2, tr("lbl_user_msg", "사용자 메시지 ({cnt})").format(cnt=len(valid_acks)))
         
+        text_c = "#374151" if self.is_light else "#E4E4E7"
+        date_c = "#2563EB" if self.is_light else "#60A5FA"
+        dim_c = "#6B7280" if self.is_light else "#A1A1AA"
+        line_c = "#E5E7EB" if self.is_light else "#3F3F46"
+
         if not valid_acks:
-            self.log_browser.setHtml(f"<p style='color: gray; margin: 10px;'>{tr('msg_no_messages', '메시지가 없습니다.')}</p>")
+            self.log_browser.setHtml(f"<p style='color: {dim_c}; margin: 14px;'>{tr('msg_no_messages', '메시지가 없습니다.')}</p>")
         else:
             log_html = "<div style='margin: 10px;'>"
             for ack in valid_acks:
                 time_str = ack.get('time', '')
                 user_str = ack.get('user', 'Unknown User')
                 msg_str = ack.get('message', '').replace(chr(10), '<br>')
-                log_html += f"<div style='margin-bottom: 15px;'><span style='color: #2980B9; font-weight: bold;'>[{time_str}] {user_str}</span><br><span style='color: #2C3E50;'>{msg_str}</span></div><hr>"
+                log_html += f"<div style='margin-bottom: 15px;'><span style='color: {date_c}; font-weight: bold;'>[{time_str}] {user_str}</span><br><span style='color: {text_c};'>{msg_str}</span></div><hr style='border: 0; border-top: 1px dashed {line_c};'>"
             self.log_browser.setHtml(log_html + "</div>")
 
     def refresh_log_data(self):
-        logger.debug(tr_log("[UI 액션] 장애 메시지 로그 탭 수동 새로고침", "[UI Action] Issue message log tab manual refresh"))
         self.btn_refresh_log.setText(tr("msg_refreshing", "⏳ 새로고침 중..."))
         self.btn_refresh_log.setEnabled(False)
         QApplication.processEvents() 
         
         try:
-            config = self.parent().config
-            
             params = {
                 "eventids": [self.issue_data["eventid"]],
                 "selectAcknowledges": "extend",
                 "source": 0, "object": 0
             }
-            problems = zabbix_api_call(config, "problem.get", params)
+            problems = zabbix_api_call(self.config, "problem.get", params)
             
             if problems:
                 acks = problems[0].get("acknowledges", [])
-                
                 user_ids = list({ack["userid"] for ack in acks if "userid" in ack and ack["userid"] != "0"})
                 user_map = {}
                 if user_ids:
-                    user_res = zabbix_api_call(config, "user.get", {
+                    user_res = zabbix_api_call(self.config, "user.get", {
                         "output": ["userid", "name", "surname", "username", "alias"], 
                         "userids": user_ids
                     })
@@ -1457,12 +1606,12 @@ class IssueActionDialog(QDialog):
                         name_str = u.get('name', '').strip()
                         surname_str = u.get('surname', '').strip()
                         
-                        # 이름이나 성에 한글이 포함되어 있다면 "성+이름" 순서로 붙여서 출력 (홍길동)
                         if any('가' <= c <= '힣' for c in name_str + surname_str):
-                            full_name = f"{surname_str}{name_str}"
-                        else: # 영어나 기타 언어면 기존처럼 "이름 성" 유지 (John Smith)
-                            full_name = f"{name_str} {surname_str}".strip()
-                            
+                            if len(name_str) == 1 and len(surname_str) == 2: full_name = f"{name_str}{surname_str}"
+                            elif len(surname_str) == 1 and len(name_str) == 2: full_name = f"{surname_str}{name_str}"
+                            else: full_name = f"{surname_str}{name_str}".strip()
+                        else: full_name = f"{name_str} {surname_str}".strip()
+
                         if not full_name: full_name = u.get("username", u.get("alias", "Unknown"))
                         user_map[u["userid"]] = full_name
                 
@@ -1481,8 +1630,6 @@ class IssueActionDialog(QDialog):
         finally:
             self.btn_refresh_log.setText(tr("btn_refresh", "🔄 새로고침"))
             self.btn_refresh_log.setEnabled(True)
-
-
 
 class AlertCircle(QWidget):
     def __init__(self, hex_color, severity_name):
@@ -1590,16 +1737,68 @@ class AlertCircle(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         
         theme = self.window().config.get("theme", "circle")
+        is_light = self.window().config.get("color_mode", "dark") == "light"
         
+        # ★ 핵심 1: 애니메이션 진행도를 0.0 ~ 1.0 사이의 비율로 정규화
+        progress = max(0.0, min(1.0, (self.current_opacity - 0.3) / 0.7))
+        
+        base_bg = QColor(255, 255, 255, 240) if is_light else QColor(28, 28, 32, 230)
+
         if self.is_error_state:
-            painter.setOpacity(1.0)
-            bg_color = QColor(231, 76, 60) if self.blink_toggle else QColor(255, 255, 255)
-            text_color = QColor(255, 255, 255) if self.blink_toggle else QColor(231, 76, 60)
-            painter.setBrush(QBrush(bg_color, Qt.SolidPattern))
-            painter.setPen(QPen(QColor(0, 0, 0), 3))
-            if "rectangle" in theme: painter.drawRect(1, 1, self.width()-2, self.height()-2)
-            else: painter.drawEllipse(1, 1, self.width()-2, self.height()-2)
-            
+            glow_color = QColor(231, 76, 60)
+            border_color = glow_color if self.blink_toggle else (QColor(0, 0, 0, 30) if is_light else QColor(255, 255, 255, 50))
+            text_color = glow_color if self.blink_toggle else (QColor(31, 41, 55) if is_light else QColor(255, 255, 255))
+            num_color = text_color
+        else:
+            if self.is_highlighted:
+                if is_light:
+                    glow_color = QColor(31, 41, 55) if self.highlight_type == 'created' else QColor(16, 185, 129)
+                else:
+                    glow_color = QColor(255, 255, 255) if self.highlight_type == 'created' else QColor(46, 204, 113)
+                    
+                border_color = glow_color if self.blink_toggle else self.circle_color
+                text_color = glow_color if self.blink_toggle else (QColor(31, 41, 55) if is_light else QColor(255, 255, 255))
+                num_color = text_color
+            else:
+                glow_color = self.circle_color
+                
+                # 부드러운 테두리 투명도 보간 (흐릿함 -> 선명함)
+                active_border_alpha = 255 if is_light else 180
+                current_border_alpha = int(active_border_alpha * (0.3 + 0.7 * progress))
+                border_color = QColor(glow_color.red(), glow_color.green(), glow_color.blue(), current_border_alpha)
+                
+                active_text = QColor(31, 41, 55) if is_light else QColor(255, 255, 255)
+                inactive_text = QColor(156, 163, 175) if is_light else QColor(113, 113, 122) # 회색
+                
+                if self.alert_count == 0:
+                    # ★ 핵심 2: 글자색을 회색 -> 원래 색상으로 프레임마다 부드럽게 섞어줌 (깜빡임 제거)
+                    r = int(inactive_text.red() + (active_text.red() - inactive_text.red()) * progress)
+                    g = int(inactive_text.green() + (active_text.green() - inactive_text.green()) * progress)
+                    b = int(inactive_text.blue() + (active_text.blue() - inactive_text.blue()) * progress)
+                    text_color = QColor(r, g, b)
+                    
+                    # 숫자 색상도 동일하게 서서히 밝아지도록 보간
+                    dim_num = QColor(glow_color.red(), glow_color.green(), glow_color.blue(), 80)
+                    nr = int(dim_num.red() + (glow_color.red() - dim_num.red()) * progress)
+                    ng = int(dim_num.green() + (glow_color.green() - dim_num.green()) * progress)
+                    nb = int(dim_num.blue() + (glow_color.blue() - dim_num.blue()) * progress)
+                    na = int(dim_num.alpha() + (glow_color.alpha() - dim_num.alpha()) * progress)
+                    num_color = QColor(nr, ng, nb, na)
+                else:
+                    text_color = active_text
+                    num_color = glow_color
+
+        painter.setBrush(QBrush(base_bg))
+        pen_width = 3 if self.is_highlighted or self.is_error_state else 2
+        painter.setPen(QPen(border_color, pen_width))
+        
+        rect = self.rect().adjusted(2, 2, -2, -2)
+        if "rectangle" in theme:
+            painter.drawRoundedRect(rect, 12, 12)
+        else:
+            painter.drawEllipse(rect)
+
+        if self.is_error_state:
             painter.setPen(text_color)
             font = QFont("IBM Plex Sans KR") 
             font.setPixelSize(int(self.width() * 0.4)) 
@@ -1607,47 +1806,29 @@ class AlertCircle(QWidget):
             painter.setFont(font)
             painter.drawText(0, 0, self.width(), self.height(), Qt.AlignCenter, self.error_char)
             return
-        
-        if self.blink_toggle:
-            painter.setOpacity(1.0) 
-            bg_color = QColor(255, 255, 255) if self.highlight_type == 'created' else QColor(46, 204, 113)
-            text_color = self.circle_color if self.highlight_type == 'created' else QColor(255, 255, 255)
-        else:
-            painter.setOpacity(self.current_opacity)
-            bg_color = self.circle_color
-            text_color = QColor(255, 255, 255)
-
-        painter.setBrush(QBrush(bg_color, Qt.SolidPattern))
-        if self.is_highlighted:
-            painter.setPen(QPen(QColor(0, 0, 0), 3))
-            if "rectangle" in theme: painter.drawRect(1, 1, self.width()-2, self.height()-2)
-            else: painter.drawEllipse(1, 1, self.width()-2, self.height()-2)
-        else:
-            painter.setPen(Qt.NoPen)
-            if "rectangle" in theme: painter.drawRect(0, 0, self.width(), self.height())
-            else: painter.drawEllipse(0, 0, self.width(), self.height())
 
         painter.setPen(text_color)
         font = QFont("IBM Plex Sans KR") 
         font.setBold(True) 
         
-        # 1. 글자 길이에 맞춰 폰트 크기 자동 조절 (Auto-fit)
-        pixel_size = int(self.width() * 0.25)
+        pixel_size = int(self.width() * 0.18)
         font.setPixelSize(pixel_size)
         fm = QFontMetrics(font)
         
-        # 텍스트 너비가 원의 너비(양옆 여백 8px 제외)보다 크면 폰트 크기를 1씩 줄임
-        while fm.boundingRect(self.severity_name).width() > self.width() - 8 and pixel_size > 8:
+        max_text_width = self.width() - 14
+        while fm.boundingRect(self.severity_name).width() > max_text_width and pixel_size > 9:
             pixel_size -= 1
             font.setPixelSize(pixel_size)
             fm = QFontMetrics(font)
 
         painter.setFont(font)
-        painter.drawText(0, int(self.height() * 0.1), self.width(), int(self.height() * 0.4), Qt.AlignCenter, self.severity_name)
+        painter.drawText(0, int(self.height() * 0.15), self.width(), int(self.height() * 0.35), Qt.AlignCenter, self.severity_name)
 
-        # 2. 알림 숫자 크기는 기존 비율 유지
-        font.setPixelSize(int(self.width() * 0.35))
+        font.setPixelSize(int(self.width() * 0.32))
         painter.setFont(font)
+        
+        # 적용된 보간 색상으로 렌더링
+        painter.setPen(num_color)
         painter.drawText(0, int(self.height() * 0.45), self.width(), int(self.height() * 0.45), Qt.AlignCenter, str(self.alert_count))
 
     def enterEvent(self, event):
@@ -1979,7 +2160,8 @@ class ZabbixDesktopWidget(QWidget):
         self.init_system_tray() 
         self.setMouseTracking(True)
         
-        QApplication.primaryScreen().availableGeometryChanged.connect(self.ensure_within_screen)
+        for screen in QApplication.screens():
+            screen.availableGeometryChanged.connect(self.ensure_within_screen)
         
         self.api_timer = QTimer(self)
         self.api_timer.timeout.connect(self.fetch_zabbix_data)
@@ -2039,9 +2221,45 @@ class ZabbixDesktopWidget(QWidget):
         ui_layout.addWidget(self.btn_cancel_resize)
         self.resize_ui_container.hide()
         
+    def update_menu_style(self):
+        is_light = self.config.get("color_mode", "dark") == "light"
+        
+        bg_color = "#FFFFFF" if is_light else "#1C1C20"
+        text_color = "#2C3E50" if is_light else "#F4F4F5"
+        border_color = "#C8D0D8" if is_light else "#3F3F46"
+        sel_bg = "#3498DB" if is_light else "#2563EB"
+        sep_color = "#E5E7EB" if is_light else "#3F3F46"
+        
+        menu_style = f"""
+            QMenu {{ 
+                background-color: {bg_color}; 
+                border: 1px solid {border_color}; 
+                padding: 6px; 
+            }} 
+            QMenu::item {{ 
+                padding: 7px 28px 7px 28px; 
+                color: {text_color};
+            }} 
+            QMenu::item:selected {{ 
+                background-color: {sel_bg}; 
+                color: white; 
+                border-radius: 4px;
+            }} 
+            QMenu::separator {{ 
+                height: 1px; 
+                background: {sep_color}; 
+                margin: 4px 8px; 
+            }}
+        """
+        self.main_menu.setStyleSheet(menu_style)
+
     def ensure_within_screen(self, *args):
-        screen = QApplication.primaryScreen()
+        # ★ 핵심: 무조건 1번 모니터가 아니라, 현재 위젯 좌표가 속한 모니터를 동적으로 찾음
+        screen = QApplication.screenAt(self.pos())
+        if not screen: 
+            screen = QApplication.primaryScreen()
         if not screen: return
+        
         rect = screen.availableGeometry()
         win_geom = self.geometry()
         
@@ -2087,7 +2305,7 @@ class ZabbixDesktopWidget(QWidget):
 
     def init_global_menu(self):
         self.main_menu = QMenu(self)
-        self.main_menu.setStyleSheet("QMenu { background-color: #FFFFFF; border: 1px solid #C8D0D8; padding: 6px; } QMenu::item { padding: 7px 28px 7px 28px; } QMenu::item:selected { background-color: #3498DB; color: white; } QMenu::separator { height: 1px; background: #E5E7EB; margin: 4px 8px; }")
+        self.update_menu_style()  # ★ 추가됨: 동적 스타일 적용
         self.main_menu.aboutToShow.connect(self.sync_menu_states)
 
         self.act_history = QAction(tr("menu_history", "🕒 최근 알림 히스토리"), self.main_menu)
@@ -2175,17 +2393,25 @@ class ZabbixDesktopWidget(QWidget):
             
         self.main_menu.addSeparator()
         
-        # 언어 설정 메뉴
+        # (기존 코드) 언어 설정 메뉴 부분
         lang_menu = self.main_menu.addMenu(tr("menu_lang", "🌐 언어 (Language)"))
         self.act_lang_ko = QAction(tr("lang_ko", "한국어"), lang_menu, checkable=True)
         self.act_lang_en = QAction(tr("lang_en", "English"), lang_menu, checkable=True)
-        
         self.act_lang_ko.triggered.connect(lambda: self.set_language("ko"))
         self.act_lang_en.triggered.connect(lambda: self.set_language("en"))
-        
         lang_menu.addAction(self.act_lang_ko)
         lang_menu.addAction(self.act_lang_en)
 
+        # ★ 여기에 새로운 '테마 색상' 메뉴 추가
+        color_mode_menu = self.main_menu.addMenu(tr("menu_color_mode", "🎨 컬러 모드 (Color Mode)"))
+        self.act_mode_dark = QAction(tr("mode_dark", "다크 모드 (Dark)"), color_mode_menu, checkable=True)
+        self.act_mode_light = QAction(tr("mode_light", "라이트 모드 (Light)"), color_mode_menu, checkable=True)
+        self.act_mode_dark.triggered.connect(lambda: self.set_color_mode("dark"))
+        self.act_mode_light.triggered.connect(lambda: self.set_color_mode("light"))
+        color_mode_menu.addAction(self.act_mode_dark)
+        color_mode_menu.addAction(self.act_mode_light)
+        
+        # (기존 코드) 디버그 모드 계속...
         self.act_debug = QAction(tr("menu_debug", "디버그 모드 (로그 기록)"), self.main_menu, checkable=True)
         self.act_debug.triggered.connect(self.toggle_debug_mode)
         self.main_menu.addAction(self.act_debug)
@@ -2244,6 +2470,11 @@ class ZabbixDesktopWidget(QWidget):
         self.act_lang_ko.setChecked(current_lang == "ko")
         self.act_lang_en.setChecked(current_lang == "en")
         
+        # ★ 추가됨: 다크/라이트 모드 체크 상태 동기화
+        current_color_mode = self.config.get("color_mode", "dark")
+        self.act_mode_dark.setChecked(current_color_mode == "dark")
+        self.act_mode_light.setChecked(current_color_mode == "light")
+        
         for val, act in self.dict_noti.items(): act.setChecked(val == self.config.get("noti_duration", 7))
         for val, act in self.dict_pos.items(): act.setChecked(val == self.config.get("noti_position", "bottom_right"))
         for val, act in self.dict_ref.items(): act.setChecked(val == self.config.get("refresh_interval", 5))
@@ -2264,10 +2495,32 @@ class ZabbixDesktopWidget(QWidget):
             if getattr(circle, 'list_window', None) and circle.list_window.isVisible():
                 circle.list_window.close()
                 
+        # ★ 추가됨: 앱 재시작 시 떠있는 알림(Toast)이 참조 오류를 일으키지 않도록 즉시 강제 파괴
+        for t in list(self.toast_manager.toasts):
+            t.is_closing = True
+            t.close()
+        self.toast_manager.toasts.clear()
+                
         if hasattr(self, 'tray') and self.tray is not None:
             self.tray.hide()
             
         QApplication.instance().exit(1337)
+
+    def set_color_mode(self, mode):
+        logger.debug(tr_log(f"[UI 액션] 컬러 모드 변경: {mode}", f"[UI Action] Color mode changed: {mode}"))
+        self.config["color_mode"] = mode
+        self.save_current_settings()
+        
+        self.update_menu_style()  # ★ 추가됨: 메뉴 스타일 즉시 갱신
+        
+        # 열려있는 창 모두 닫기 및 즉시 색상 업데이트
+        for circle in self.circles:
+            if getattr(circle, 'list_window', None) and circle.list_window.isVisible():
+                circle.list_window.close()
+            circle.update()
+        
+        self.toast_manager.clear_all()
+        self.update()
 
     def init_system_tray(self):
         self.tray = QSystemTrayIcon(self)
@@ -2358,17 +2611,48 @@ class ZabbixDesktopWidget(QWidget):
         self.save_current_settings()
         
         self.api_timer.stop()
+        
+        # 1. 알림 리스트 창 안전 종료
         for circle in self.circles:
             if getattr(circle, 'list_window', None) and circle.list_window.isVisible():
                 circle.list_window.close()
+                circle.list_window.deleteLater()
+                
+        # 2. ★ 핵심: 떠 있는 Toast(알림창)들을 강제 파괴하여 C++ 참조 오류(Crash) 원천 차단
+        for t in list(self.toast_manager.toasts):
+            try:
+                t.opacity_anim.stop()
+                t.close()
+                t.deleteLater()
+            except:
+                pass
+        self.toast_manager.toasts.clear()
                 
         if hasattr(self, 'tray') and self.tray is not None:
             self.tray.hide()
             
+        # OS의 윈도우 포커스 탈취 방지 정책을 우회하기 위해 가장 확실한 방법인 "앱 재시작" 수행
         QApplication.instance().exit(1337)
 
     def fetch_zabbix_data(self):
+        # ★ 추가: 기존 통신 스레드가 아직 일하고 있다면, 충돌 방지를 위해 이번 턴은 건너뜀
+        if hasattr(self, 'worker') and self.worker.isRunning():
+            logger.debug(tr_log("[API 갱신] 이전 통신이 아직 진행 중이므로 이번 요청은 건너뜁니다.", "[API Update] Previous request is still running, skipping this turn."))
+            return
+            
         logger.debug(tr_log("[API 갱신] 타이머 또는 수동 조작에 의해 Zabbix 데이터 갱신 요청", "[API Update] Zabbix data update requested by timer or manual action"))
+        
+        # 주기적으로 최상단 속성 및 실제 화면 컴포지팅 레이어 강제 재조립
+        if self.config.get("always_on_top", False):
+            apply_z_order(self, True)
+            self.repaint()  # ★ 중요: Qt가 OS DWM에게 새로운 그래픽 버퍼를 강제로 밀어 넣어서 크롬의 독점 화면을 깨버림
+            
+            # 혹시 열려있는 알림 상세 리스트 창이 있다면 걔도 같이 밀어 올려줌
+            for circle in self.circles:
+                if getattr(circle, 'list_window', None) and circle.list_window.isVisible():
+                    apply_z_order(circle.list_window, True)
+                    circle.list_window.repaint()
+                    
         self.worker = ZabbixWorker(self.config)
         self.worker.data_fetched.connect(self.on_data_fetched)
         self.worker.error_occurred.connect(self.on_api_error)
@@ -2384,7 +2668,6 @@ class ZabbixDesktopWidget(QWidget):
                 self.toast_manager.show("✅ Zabbix 서버 연결이 복구되었습니다.", "resolved", self.config.get("noti_duration", 7))
             for circle in self.circles: circle.clear_error_state()
 
-        # ★ 1. 알림 누락 방지 및 '복구 알림'을 찾기 위해 기존 데이터 저장
         # ★ 1. 알림 누락 방지 및 '복구/업데이트 알림'을 찾기 위해 기존 데이터 저장
         old_problems_dict = {}
         for c in self.circles:
