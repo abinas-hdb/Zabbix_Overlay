@@ -1347,8 +1347,11 @@ class IssueActionDialog(QDialog):
         self.close_check = QCheckBox(tr("lbl_close", "장애 클로즈"))
         if str(issue_data.get("manual_close", "0")) == "0":
             self.close_check.setEnabled(False)
-            # ★ 추가됨: 비활성화된 이유를 사용자가 즉시 알 수 있도록 텍스트 추가
-            self.close_check.setText(self.close_check.text() + " (수동 클로즈 불가)")
+            
+            # ★ 수정됨: 번역 파일 초기화 없이 코드 단에서 바로 언어를 감지하여 적용
+            add_text = " (Cannot close manually)" if self.config.get("language", "ko") == "en" else " (수동 클로즈 불가)"
+            self.close_check.setText(self.close_check.text() + add_text)
+            
             self.close_check.setToolTip(tr("msg_manual_close_denied", "Zabbix 설정에서 수동 클로즈가 허용되지 않은 장애입니다."))
 
         issue_name_lbl = QLabel(issue_data.get("name", ""))
