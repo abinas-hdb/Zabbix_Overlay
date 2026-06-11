@@ -938,12 +938,29 @@ class ToastManager:
         current_y = geom.bottom() - margin_y if "bottom" in pos_setting else geom.top() + margin_y
             
         for t in reversed(self.toasts):
+            # ★ 핵심 1: 이미 화면 밖으로 밀려나서 닫히고 있는(Fade-out) 알림은 자리 계산에서 제외
+            if getattr(t, 'is_closing', False):
+                continue
+                
             x = geom.right() - t.width() - margin_x if "right" in pos_setting else geom.left() + margin_x
+            
             if "bottom" in pos_setting:
-                t.move(x, current_y - t.height())
+                target_y = current_y - t.height()
+                # ★ 핵심 2: 알림이 모니터 위쪽 화면 밖으로 삐져나가려고 하면 강제로 스르륵 닫아버림
+                if target_y < geom.top() + 10:
+                    t.fade_and_close()
+                    continue
+                
+                t.move(x, target_y)
                 current_y -= (t.height() + 5)
             else:
-                t.move(x, current_y)
+                target_y = current_y
+                # ★ 핵심 3: (상단 배치 시) 알림이 모니터 아래쪽 화면 밖으로 삐져나가려고 하면 강제 닫음
+                if target_y + t.height() > geom.bottom() - 10:
+                    t.fade_and_close()
+                    continue
+                
+                t.move(x, target_y)
                 current_y += (t.height() + 5)
 
     def remove(self, t):
@@ -1954,13 +1971,24 @@ class AlertCircle(QWidget):
         painter.setFont(font)
         painter.drawText(0, int(self.height() * 0.15), self.width(), int(self.height() * 0.35), Qt.AlignCenter, self.severity_name)
 
-        # 알림 숫자 라벨 (하단) - 숫자 크기도 보기 좋게 0.34로 살짝 키웠습니다
-        font.setPixelSize(int(self.width() * 0.34))
+        # ★ 수정: 알림 숫자도 자릿수가 길어지면 원을 뚫지 않게 자동 축소되도록 로직 추가
+        count_str = str(self.alert_count)
+        num_pixel_size = int(self.width() * 0.34)
+        font.setPixelSize(num_pixel_size)
+        fm = QFontMetrics(font)
+        
+        # 하단부 곡률을 감안하여 여백을 넉넉히(24px) 줍니다.
+        max_num_width = self.width() - 24
+        while fm.boundingRect(count_str).width() > max_num_width and num_pixel_size > 8:
+            num_pixel_size -= 1
+            font.setPixelSize(num_pixel_size)
+            fm = QFontMetrics(font)
+
         painter.setFont(font)
         
         # 적용된 보간 색상으로 렌더링
         painter.setPen(num_color)
-        painter.drawText(0, int(self.height() * 0.45), self.width(), int(self.height() * 0.45), Qt.AlignCenter, str(self.alert_count))
+        painter.drawText(0, int(self.height() * 0.45), self.width(), int(self.height() * 0.45), Qt.AlignCenter, count_str)
 
     def enterEvent(self, event):
         if self.is_error_state: return 
