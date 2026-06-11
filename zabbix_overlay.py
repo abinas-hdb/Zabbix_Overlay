@@ -1811,12 +1811,15 @@ class AlertCircle(QWidget):
         font = QFont("IBM Plex Sans KR") 
         font.setBold(True) 
         
-        pixel_size = int(self.width() * 0.18)
+        # ★ 수정 1: 시작 폰트 크기를 다시 큼직하게(0.24) 잡습니다. (짧은 한글을 위해)
+        pixel_size = int(self.width() * 0.24)
         font.setPixelSize(pixel_size)
         fm = QFontMetrics(font)
         
-        max_text_width = self.width() - 14
-        while fm.boundingRect(self.severity_name).width() > max_text_width and pixel_size > 9:
+        # ★ 수정 2: 글자의 가로 길이가 여백 한계치(너비 - 20px)를 넘을 때만 강제로 폰트를 줄입니다.
+        # (영어처럼 긴 단어만 이 반복문을 타면서 크기가 작아집니다)
+        max_text_width = self.width() - 20
+        while fm.boundingRect(self.severity_name).width() > max_text_width and pixel_size > 8:
             pixel_size -= 1
             font.setPixelSize(pixel_size)
             fm = QFontMetrics(font)
@@ -1824,7 +1827,8 @@ class AlertCircle(QWidget):
         painter.setFont(font)
         painter.drawText(0, int(self.height() * 0.15), self.width(), int(self.height() * 0.35), Qt.AlignCenter, self.severity_name)
 
-        font.setPixelSize(int(self.width() * 0.32))
+        # 알림 숫자 라벨 (하단) - 숫자 크기도 보기 좋게 0.34로 살짝 키웠습니다
+        font.setPixelSize(int(self.width() * 0.34))
         painter.setFont(font)
         
         # 적용된 보간 색상으로 렌더링
