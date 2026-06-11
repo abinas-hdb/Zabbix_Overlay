@@ -1115,10 +1115,13 @@ class AlertListWindow(QWidget):
         return wrapper
 
     def eventFilter(self, obj, event):
-        if obj == self.list_widget.viewport() and event.type() == QEvent.Leave:
-            self.list_widget.clearSelection()
-            self.list_widget.setCurrentRow(-1)
-            self.list_widget.viewport().update()
+        # ★ 추가됨: list_widget이 완전히 생성된 이후에만 이벤트 필터를 작동시키도록 방어 코드 추가
+        if hasattr(self, 'list_widget') and self.list_widget is not None:
+            if obj == self.list_widget.viewport() and event.type() == QEvent.Leave:
+                self.list_widget.clearSelection()
+                self.list_widget.setCurrentRow(-1)
+                self.list_widget.viewport().update()
+                
         return super().eventFilter(obj, event)
 
     def refresh_page(self):
