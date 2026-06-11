@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QMenu, QAction,
                              QListWidget, QLabel, QPushButton, QHBoxLayout, QMessageBox, 
                              QListWidgetItem, QDialog, QFormLayout, QDialogButtonBox, 
                              QPlainTextEdit, QComboBox, QCheckBox, QFrame, QBoxLayout,
-                             QTabWidget, QTextBrowser, QSystemTrayIcon, QWidgetAction, QSizePolicy, QGridLayout, QSizeGrip, QGraphicsDropShadowEffect)
+                             QTabWidget, QTextBrowser, QSystemTrayIcon, QWidgetAction, QSizePolicy, QGridLayout, QSizeGrip, QGraphicsDropShadowEffect, QScrollBar)
 from PyQt5.QtCore import Qt, QPoint, QVariantAnimation, QThread, pyqtSignal, QTimer, QEvent, QSize, QSharedMemory, QPointF
 from PyQt5.QtGui import QPainter, QColor, QBrush, QFont, QPen, QFontMetrics, QFontDatabase, QIcon, QPixmap, QPolygonF
 
@@ -732,6 +732,61 @@ class BubbleBgFrame(QFrame):
         painter.drawRoundedRect(bar_rect, 6, 6)
         painter.drawRect(4, 0, 4, self.height())
 
+class ModernScrollBar(QScrollBar):
+    def __init__(self, is_light, parent=None):
+        super().__init__(Qt.Vertical, parent)
+        self.is_light = is_light
+        # 다크/라이트 모드에 맞춘 스크롤바 색상
+        self.bg_color = "rgba(0, 0, 0, 0.2)" if is_light else "rgba(255, 255, 255, 0.2)"
+        self.hover_color = "rgba(0, 0, 0, 0.4)" if is_light else "rgba(255, 255, 255, 0.4)"
+        
+        # ★ 수정: 평소(thin)일 때 좌우 마진을 7px씩 주어, 중앙에 4px 두께로 이쁘게 위치시킵니다. (7 + 4 + 7 = 18px)
+        self.current_margin = 7  
+        self.current_color = self.bg_color
+        
+        # 스무스 애니메이션 세팅 (0.15초)
+        self.anim = QVariantAnimation(self)
+        self.anim.setDuration(150)
+        self.anim.valueChanged.connect(self.update_margin)
+        
+        self.update_margin(self.current_margin)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def enterEvent(self, event):
+        self.current_color = self.hover_color
+        self.anim.stop()
+        self.anim.setStartValue(self.current_margin)
+        self.anim.setEndValue(4) # ★ 호버 시 좌우 마진을 4px로 줄여, 중앙에서 '좌우 양옆으로' 10px 두께까지 확장! (4 + 10 + 4 = 18px)
+        self.anim.start()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.current_color = self.bg_color
+        self.anim.stop()
+        self.anim.setStartValue(self.current_margin)
+        self.anim.setEndValue(7) # ★ 마우스 떼면 다시 좌우 마진을 7px로 늘려 중앙으로 쏙 축소!
+        self.anim.start()
+        super().leaveEvent(event)
+
+    def update_margin(self, margin):
+        self.current_margin = margin
+        # ★ 핵심: margin 값을 좌우 매개변수에 똑같이 {margin}px로 주어 중심축(Center)을 완벽하게 고정합니다.
+        # 애니메이션 프레임이 돌 때 좌우 여백이 동시에 깎이므로 원하는 대로 좌우 균등하게 벌어집니다.
+        self.setStyleSheet(f"""
+            QScrollBar:vertical {{ 
+                background: transparent; 
+                width: 18px; 
+                margin: 6px 0px 6px 0px; 
+            }}
+            QScrollBar::handle:vertical {{
+                background: {self.current_color};
+                min-height: 30px;
+                border-radius: 2px; 
+                margin: 0px {margin}px 0px {margin}px;
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; border: none; background: none; }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
+        """)
 
 # ==========================================
 # 알림창(ToastWidget) - 2026 모던 UI 적용
@@ -1015,27 +1070,25 @@ class AlertListWindow(QWidget):
         self.list_widget.setSelectionMode(QListWidget.NoSelection)
         self.list_widget.viewport().installEventFilter(self)
         self.list_widget.setWordWrap(True)
-        # ★ 수정됨: 스크롤바 정책을 '항상 끔'에서 '필요 시 표시(AsNeeded)'로 변경
+        # ★ 수정 1: 스크롤 방식을 '아이템 단위'에서 '픽셀 단위'로 변경하여 물 흐르듯 부드럽게 만듦
+        self.list_widget.setVerticalScrollMode(QListWidget.ScrollPerPixel)
+        self.list_widget.verticalScrollBar().setSingleStep(15) # 마우스 휠 스크롤 속도 조절
+
         self.list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.list_widget.itemDoubleClicked.connect(self.open_issue_editor)
 
-        # ★ 추가됨: 다크/라이트 모드에 맞춘 반투명 스크롤바 색상 변수 설정
+        # 다크/라이트 모드에 맞춘 반투명 스크롤바 색상 변수 설정
         scroll_handle_bg = "rgba(0, 0, 0, 0.2)" if self.is_light else "rgba(255, 255, 255, 0.2)"
         scroll_handle_hover = "rgba(0, 0, 0, 0.4)" if self.is_light else "rgba(255, 255, 255, 0.4)"
 
-        # ★ 수정됨: QListWidget 스크롤바(QScrollBar) 디자인 추가
-        self.list_widget.setStyleSheet(f"""
-            QListWidget {{ background-color: transparent; border: none; outline: none; }}
-            QListWidget::item {{ padding: 2px 0px; margin: 0px; background-color: transparent; border: none; }}
-            
-            /* 모던 반투명 스크롤바 디자인 */
-            QScrollBar:vertical {{ background: transparent; width: 6px; margin: 2px 2px 2px 0px; }}
-            QScrollBar::handle:vertical {{ background: {scroll_handle_bg}; min-height: 30px; border-radius: 3px; }}
-            QScrollBar::handle:vertical:hover {{ background: {scroll_handle_hover}; }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; border: none; background: none; }}
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
+        # ★ 수정 2: QListWidget 스크롤바(QScrollBar) 디자인 변경 (호버 시 넓어짐 효과)
+        self.list_widget.setStyleSheet("""
+            QListWidget { background-color: transparent; border: none; outline: none; }
+            QListWidget::item { padding: 2px 0px; margin: 0px; background-color: transparent; border: none; }
         """)
+
+        self.list_widget.setVerticalScrollBar(ModernScrollBar(self.is_light, self.list_widget))
 
         bg_layout.addLayout(header_layout)
         bg_layout.addWidget(self.list_widget)
@@ -1125,7 +1178,8 @@ class AlertListWindow(QWidget):
         return super().eventFilter(obj, event)
 
     def refresh_page(self):
-        self.list_widget.clear()
+        # 기존에 있던 self.list_widget.clear()는 아래로 이동합니다.
+        
         total_count = len(self.problems_list)
         start = self.current_page * self.items_per_page
         end = start + self.items_per_page
@@ -1138,6 +1192,18 @@ class AlertListWindow(QWidget):
         self.next_btn.setVisible(self.current_page < self.total_pages - 1)
         self.page_lbl.setVisible(self.total_pages > 1)
         
+        # ★ 핵심 방어 로직: 현재 페이지의 데이터가 100% 동일하다면 화면을 다시 그리지 않음
+        # 이 코드를 통해 5초마다 리스트가 파괴/재생성되며 발생하는 
+        # 마우스 호버(Hover) 풀림 및 더블클릭 씹힘 현상을 완벽하게 방지합니다.
+        import json
+        current_state_json = json.dumps(page_items, sort_keys=True)
+        if getattr(self, '_last_rendered_state', None) == current_state_json:
+            return  # 데이터 변경이 없으면 리스트를 지우지 않고 여기서 즉시 종료!
+            
+        self._last_rendered_state = current_state_json
+        
+        # 데이터가 바뀌었을 때만 리스트를 비우고 다시 그립니다.
+        self.list_widget.clear()
         total_height = 52 + 28 # 헤더 높이 + 컨테이너 패딩
         
         if not page_items:
@@ -1162,7 +1228,6 @@ class AlertListWindow(QWidget):
                 
                 rect = fm.boundingRect(0, 0, 310, 2000, Qt.TextWordWrap | Qt.AlignLeft, name_text)
                 
-                # 🛠 카드 디자인 적용으로 상하 여백이 늘어났으므로 넉넉하게 높이 계산 (+85)
                 calc_height = max(85, rect.height() + 85)
                 
                 item.setSizeHint(QSize(0, calc_height))
@@ -1170,7 +1235,7 @@ class AlertListWindow(QWidget):
                 self.list_widget.setItemWidget(item, widget)
                 total_height += calc_height
 
-        self.resize(440, max(150, total_height)) # 창 너비도 살짝 넓혀 가독성 향상
+        self.resize(440, max(150, total_height))
 
     def go_prev_page(self):
         if self.current_page > 0:
@@ -1339,15 +1404,16 @@ class IssueActionDialog(QDialog):
             QPushButton {{ padding: 6px 14px; border: 1px solid {border_color}; border-radius: 6px; background-color: {pane_bg}; color: {text_color}; font-weight: bold; }} 
             QPushButton:hover {{ background-color: {border_color}; }}
             
-            /* 스크롤바 디자인 */
-            QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0px; }}
-            QScrollBar::handle:vertical {{ background: {scroll_bg}; min-height: 30px; border-radius: 5px; margin: 2px; }}
-            QScrollBar::handle:vertical:hover {{ background: {scroll_hover}; }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; border: none; background: none; }}
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
+            /* ★ QTextBrowser 내부 흰색 영역과 스크롤바가 겹쳐서 생기는 바깥 라인 완벽 제거 */
+            QTextBrowser {{
+                border: 1px solid {border_color};
+                border-radius: 6px;
+                background-color: {pane_bg};
+            }}
             
+            /* 가로 스크롤바 깔끔하게 매칭 */
             QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 0px; }}
-            QScrollBar::handle:horizontal {{ background: {scroll_bg}; min-width: 30px; border-radius: 5px; margin: 2px; }}
+            QScrollBar::handle:horizontal {{ background: {scroll_bg}; min-width: 30px; border-radius: 2px; margin: 2px; }}
             QScrollBar::handle:horizontal:hover {{ background: {scroll_hover}; }}
             QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0px; border: none; background: none; }}
             QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background: none; }}
@@ -1440,9 +1506,13 @@ class IssueActionDialog(QDialog):
 
         layout_history.addLayout(history_header)
 
+        # (히스토리 탭 부분)
         self.history_browser = QTextBrowser()
-        self.history_browser.setStyleSheet(f"background-color: {pane_bg}; border: 1px solid {border_color}; border-radius: 6px;")
         self.history_browser.setHtml(f"<p style='color: {dim_text}; margin: 10px;'>{tr('lbl_loading_data', '데이터를 불러오는 중입니다...')}</p>")
+        
+        # ★ 추가됨: 히스토리 창에 애니메이션 스크롤바 주입
+        self.history_browser.setVerticalScrollBar(ModernScrollBar(self.is_light, self.history_browser))
+        
         layout_history.addWidget(self.history_browser)
         
         self.tabs.addTab(self.tab_history, tr("tab_history", "히스토리"))
@@ -1462,8 +1532,12 @@ class IssueActionDialog(QDialog):
         log_header.addWidget(self.btn_refresh_log)
         layout_log.addLayout(log_header)
 
+        # (메시지 로그 탭 부분)
         self.log_browser = QTextBrowser()
-        self.log_browser.setStyleSheet(f"background-color: {pane_bg}; border: 1px solid {border_color}; border-radius: 6px;")
+        
+        # ★ 추가됨: 메시지 로그 창에 애니메이션 스크롤바 주입
+        self.log_browser.setVerticalScrollBar(ModernScrollBar(self.is_light, self.log_browser))
+        
         layout_log.addWidget(self.log_browser)
         
         self.tabs.addTab(self.tab_log, tr("tab_log", "메시지 로그"))
