@@ -1043,6 +1043,10 @@ class AlertListWindow(QWidget):
 
         self.refresh_page()
 
+        # ★ 추가됨: 애니메이션을 위한 초기 투명도 및 종료 플래그 설정
+        self.setWindowOpacity(0.0)
+        self._is_closing = False
+
     def create_issue_item_widget(self, issue_data):
         card_widget = QWidget()
         
@@ -1247,8 +1251,33 @@ class AlertListWindow(QWidget):
         if event.button() == Qt.LeftButton:
             self._is_dragging = False
             event.accept()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # 창이 열릴 때 0.2초(200ms) 동안 스르륵 나타나는 페이드인 효과
+        self.show_anim = QVariantAnimation(self)
+        self.show_anim.setDuration(200)
+        self.show_anim.setStartValue(0.0)
+        self.show_anim.setEndValue(1.0)
+        self.show_anim.valueChanged.connect(self.setWindowOpacity)
+        self.show_anim.start()
             
     def closeEvent(self, event):
+        # 이미 닫히는 애니메이션이 진행 중이 아니라면
+        if not getattr(self, '_is_closing', False):
+            self._is_closing = True
+            event.ignore()  # 즉시 꺼지는 것을 막음
+            
+            # 0.15초(150ms) 동안 스르륵 사라지는 페이드아웃 효과
+            self.close_anim = QVariantAnimation(self)
+            self.close_anim.setDuration(150)
+            self.close_anim.setStartValue(self.windowOpacity())
+            self.close_anim.setEndValue(0.0)
+            self.close_anim.valueChanged.connect(self.setWindowOpacity)
+            self.close_anim.finished.connect(self.close)  # 투명해지면 진짜로 창을 닫음
+            self.close_anim.start()
+            return
+            
         logger.debug(tr_log(f"[UI 액션] '{self.title}' 알림 리스트 창 닫기", f"[UI Action] '{self.title}' alert list window closed"))
         super().closeEvent(event)
 
