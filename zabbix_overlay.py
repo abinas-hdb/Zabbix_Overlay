@@ -1235,7 +1235,25 @@ class AlertListWindow(QWidget):
                 self.list_widget.setItemWidget(item, widget)
                 total_height += calc_height
 
-        self.resize(440, max(150, total_height))
+        # ★ 수정: 최대 높이를 제한하여 창이 작업 표시줄이나 모니터 아래로 뚫고 나가는 현상 완벽 방지
+        screen = QApplication.screenAt(self.mapToGlobal(self.rect().center()))
+        if not screen: 
+            screen = QApplication.primaryScreen()
+            
+        screen_height = screen.availableGeometry().height() if screen else 1080
+        
+        # 최대 750px 또는 모니터 가용 높이의 80% 중 작은 값을 한계치로 설정
+        max_height = min(750, int(screen_height * 0.8)) 
+        final_height = min(max_height, max(150, total_height))
+        
+        self.resize(440, final_height)
+        
+        # 높이가 변하면서 창이 엉뚱한 위치에 걸칠 수 있으므로, 제자리로 안전하게 끌고 옴
+        if self.owner_window:
+            for circle in self.owner_window.circles:
+                if getattr(circle, 'list_window', None) == self:
+                    circle.update_list_position()
+                    break
 
     def go_prev_page(self):
         if self.current_page > 0:
