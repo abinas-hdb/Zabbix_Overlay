@@ -2242,84 +2242,98 @@ def get_arrow_path():
 class AlertHistoryDialog(QDialog):
     def __init__(self, main_widget, parent=None):
         super().__init__(parent)
-        self.main_widget = main_widget  # 실시간 데이터를 불러오기 위해 메인 위젯을 연결
-        max_count = self.main_widget.config.get('history_max_count', 100)
+        self.main_widget = main_widget  
+        self.config = self.main_widget.config
+        self.is_light = self.config.get("color_mode", "dark") == "light"
+        
+        max_count = self.config.get('history_max_count', 100)
         self.setWindowTitle(f"{tr('title_history', '최근 알림 히스토리')} (Max {max_count})")
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint) 
-        self.resize(550, 450)
+        self.resize(580, 480)
         
-        self.setStyleSheet("""
-            QDialog { background-color: #FFFFFF; }
-            QScrollBar:vertical { background: transparent; width: 10px; margin: 0px; }
-            QScrollBar::handle:vertical { background: #E0E0E0; min-height: 30px; border-radius: 5px; margin: 2px; }
-            QScrollBar::handle:vertical:hover { background: #C0C0C0; }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; border: none; background: none; }
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
+        # 🎨 모드에 따른 동적 색상 할당
+        bg_color = "#F9FAFB" if self.is_light else "#1C1C20"
+        text_color = "#111827" if self.is_light else "#F4F4F5"
+        pane_bg = "#FFFFFF" if self.is_light else "#2A2A30"
+        border_color = "#D1D5DB" if self.is_light else "#3F3F46"
+        input_bg = "#FFFFFF" if self.is_light else "#18181B"
+        
+        self.setStyleSheet(f"""
+            QDialog {{ background-color: {bg_color}; font-family: 'IBM Plex Sans KR', sans-serif; color: {text_color}; }}
         """)
         
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
         
         # 상단 레이아웃 (제목 & 필터)
         header_layout = QHBoxLayout()
         header_lbl = QLabel(tr("title_realtime_history", "🕒 실시간 알림 내역"))
-        header_lbl.setStyleSheet("font-size: 14px; font-weight: bold; color: #2C3E50; font-family: 'IBM Plex Sans KR', sans-serif;")
+        header_lbl.setStyleSheet(f"font-size: 15px; font-weight: bold; color: {text_color}; font-family: 'IBM Plex Sans KR', sans-serif;")
         header_layout.addWidget(header_lbl)
         
         header_layout.addStretch()
         
-        # ★ 콤보박스 화살표 복구 (자동 생성된 PNG 이미지 활용)
+        # 모던 콤보박스 디자인
         self.filter_combo = QComboBox()
         self.filter_combo.addItems([tr("filter_all", "전체보기"), tr("sev_disaster", "심각"), tr("sev_high", "중증"), tr("sev_average", "경미"), tr("sev_warning", "경고"), tr("sev_info", "정보"), tr("sev_not_cls", "미정"), tr("sev_system", "기타 (시스템)")])
         self.filter_combo.setCursor(Qt.PointingHandCursor)
         
         arrow_url = get_arrow_path()
-        self.filter_combo.setStyleSheet("""
-            QComboBox {
+        self.filter_combo.setStyleSheet(f"""
+            QComboBox {{
                 font-family: 'IBM Plex Sans KR', sans-serif; 
-                padding: 4px 8px; 
-                font-size: 12px; 
-                background-color: #F8F9FA;
-                border: 1px solid #C8D0D8;
-                border-radius: 4px;
-            }
-            QComboBox::drop-down { 
-                subcontrol-origin: padding;
-                subcontrol-position: top right;
-                width: 24px;
-                border-left-width: 0px;
-            }
-            QComboBox::down-arrow { 
-                image: url('""" + arrow_url + """');
-                width: 16px; height: 16px;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #FFFFFF;
-                border: 1px solid #C8D0D8;
-                selection-background-color: #E5E7EB;
-                selection-color: #2C3E50;
-                outline: none;
-            }
+                padding: 6px 12px; 
+                font-size: 13px; 
+                background-color: {input_bg};
+                color: {text_color};
+                border: 1px solid {border_color};
+                border-radius: 6px;
+            }}
+            QComboBox::drop-down {{ subcontrol-origin: padding; subcontrol-position: top right; width: 24px; border-left-width: 0px; }}
+            QComboBox::down-arrow {{ image: url('{arrow_url}'); width: 16px; height: 16px; }}
+            QComboBox QAbstractItemView {{
+                background-color: {pane_bg}; color: {text_color}; selection-background-color: {border_color}; selection-color: {text_color}; outline: none; border: 1px solid {border_color}; border-radius: 6px; padding: 4px;
+            }}
         """)
         self.filter_combo.currentIndexChanged.connect(self.update_view)
         header_layout.addWidget(self.filter_combo)
         
         layout.addLayout(header_layout)
         
+        # 모던 브라우저 패널
         self.browser = QTextBrowser()
-        self.browser.setStyleSheet("background-color: #F8F9FA; border: 1px solid #C8D0D8; font-family: 'IBM Plex Sans KR', sans-serif; font-size: 12px;")
+        self.browser.setStyleSheet(f"""
+            QTextBrowser {{
+                background-color: {pane_bg}; 
+                border: 1px solid {border_color}; 
+                border-radius: 8px;
+                padding: 8px 14px 8px 8px;
+                font-family: 'IBM Plex Sans KR', sans-serif; 
+                font-size: 13px;
+            }}
+        """)
+        # ★ 우리가 만든 애니메이션 스크롤바 장착!
+        self.browser.setVerticalScrollBar(ModernScrollBar(self.is_light, self.browser))
         layout.addWidget(self.browser)
         
+        # 하단 닫기 버튼
         close_btn = QPushButton(tr("btn_close", "닫기"))
         close_btn.setCursor(Qt.PointingHandCursor)
-        close_btn.setStyleSheet("QPushButton { padding: 6px 20px; background-color: #E74C3C; color: white; border: none; border-radius: 4px; font-weight: bold; font-family: 'IBM Plex Sans KR', sans-serif; } QPushButton:hover { background-color: #C0392B; }")
+        can_bg = "#EF4444" if self.is_light else "#DC2626"
+        can_hover = "#DC2626" if self.is_light else "#B91C1C"
+        close_btn.setStyleSheet(f"""
+            QPushButton {{ padding: 8px 24px; background-color: {can_bg}; color: white; border: none; border-radius: 6px; font-weight: bold; font-family: 'IBM Plex Sans KR', sans-serif; }} 
+            QPushButton:hover {{ background-color: {can_hover}; }}
+        """)
         close_btn.clicked.connect(self.close)
         
         btn_layout = QHBoxLayout()
+        btn_layout.setContentsMargins(0, 8, 0, 0)
         btn_layout.addStretch()
         btn_layout.addWidget(close_btn)
         layout.addLayout(btn_layout)
         
-        # 자동 새로고침 타이머 (1초마다 데이터 변경 감지)
+        # 자동 새로고침 타이머
         self.last_history_len = -1
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.check_auto_refresh)
@@ -2333,7 +2347,6 @@ class AlertHistoryDialog(QDialog):
             if self.last_history_len != 0: self.update_view()
         else:
             top_item_time = self.main_widget.alert_history[0]['time']
-            # 개수가 변했거나, 가장 최신 알림의 시간이 달라졌다면 즉시 화면 갱신 처리
             if current_len != self.last_history_len or getattr(self, 'last_top_time', '') != top_item_time:
                 self.update_view()
                 self.last_top_time = top_item_time
@@ -2343,17 +2356,22 @@ class AlertHistoryDialog(QDialog):
         history_data = self.main_widget.alert_history
         filter_text = self.filter_combo.currentText()
         
+        # ★ 다크/라이트 모드에 맞춰 HTML 텍스트 및 점선 색상 동적 변경
+        time_c = "#7F8C8D" if self.is_light else "#9CA3AF"
+        msg_c = "#2C3E50" if self.is_light else "#E4E4E7"
+        line_c = "#E5E7EB" if self.is_light else "#3F3F46"
+        
         if not history_data:
-            self.browser.setHtml(f"<p style='color: gray; padding: 10px;'>{tr('msg_no_recent_alerts', '최근 발생한 알림이 없습니다.')}</p>")
+            self.browser.setHtml(f"<p style='color: {time_c}; padding: 10px;'>{tr('msg_no_recent_alerts', '최근 발생한 알림이 없습니다.')}</p>")
             return
             
         color_map = {
-            "심각": "#E74C3C",  # 빨강
-            "중증": "#E67E22",  # 진주황
-            "경미": "#F39C12",  # 주황 (기존 위젯 색상 동일)
-            "경고": "#F1C40F",  # 노랑
-            "정보": "#3498DB",  # 파랑
-            "미정": "#95A5A6",  # 회색
+            "심각": "#E74C3C", 
+            "중증": "#E67E22", 
+            "경미": "#F39C12", 
+            "경고": "#F1C40F", 
+            "정보": "#3498DB", 
+            "미정": "#95A5A6", 
             "🚨 시스템": "#E74C3C",
             "✅ 시스템": "#2ECC71"
         }
@@ -2363,28 +2381,26 @@ class AlertHistoryDialog(QDialog):
         for item in history_data:
             lvl = item['level']
             
-            # ★ 필터링 로직
             if filter_text != "전체보기":
                 if filter_text == "기타 (시스템)":
                     if lvl not in ["🚨 시스템", "✅ 시스템"]: continue
                 else:
                     if lvl != filter_text: continue
                     
-            # 딕셔너리에서 색상을 찾아오고, 없으면 기본 진남색 적용
-            color = color_map.get(lvl, "#2C3E50")
+            color = color_map.get(lvl, msg_c)
             
-            html += f"<div style='margin-bottom: 10px;'>"
-            html += f"<span style='color: #7F8C8D; font-size: 11px;'>[{item['time']}]</span> "
-            html += f"<strong style='color: {color};'>[{lvl}]</strong> "
+            html += f"<div style='margin-bottom: 12px;'>"
+            html += f"<span style='color: {time_c}; font-size: 12px;'>[{item['time']}]</span> "
+            html += f"<strong style='color: {color};'>[{lvl}]</strong><br> "
             msg_html = item['msg'].replace('\n', '<br>')
-            html += f"<span style='color: #2C3E50;'>{msg_html}</span>"
-            html += f"</div><hr style='border: 0; border-top: 1px dashed #E5E7EB;'>"
+            html += f"<span style='color: {msg_c}; font-size: 13px; line-height: 1.4;'>{msg_html}</span>"
+            html += f"</div><hr style='border: 0; border-top: 1px dashed {line_c};'>"
             match_count += 1
             
         html += "</div>"
         
         if match_count == 0:
-            html = f"<p style='color: gray; padding: 10px;'>선택한 조건({filter_text})에 해당하는 알림이 없습니다.</p>"
+            html = f"<p style='color: {time_c}; padding: 10px;'>선택한 조건({filter_text})에 해당하는 알림이 없습니다.</p>"
             
         self.browser.setHtml(html)
 
