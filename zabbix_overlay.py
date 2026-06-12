@@ -2109,7 +2109,7 @@ class AlertCircle(QWidget):
         painter.setFont(font)
         painter.setPen(num_color)
         painter.drawText(0, int(self.height() * 0.45), self.width(), int(self.height() * 0.45), Qt.AlignCenter, count_str)
-        
+
     def enterEvent(self, event):
         if self.is_error_state: return 
         self.opacity_anim.stop()
@@ -2144,6 +2144,8 @@ class AlertCircle(QWidget):
         if event.button() == Qt.LeftButton:
             self._is_dragging = False
             self._drag_start_pos = event.globalPos() - self.window().pos()
+            # ★ 추가: 클릭이 시작된 최초의 정확한 마우스 좌표를 기억합니다.
+            self._click_start_pos = event.globalPos() 
             
             # ★ 원이 눌리는(Scale Down) 애니메이션
             self.click_anim.stop()
@@ -2153,7 +2155,14 @@ class AlertCircle(QWidget):
 
     def mouseMoveEvent(self, event):
         if event.buttons() == Qt.LeftButton:
-            self._is_dragging = True
+            # ★ 핵심: 드래그 판정 오차범위(Deadzone) 추가
+            # 마우스를 누른 상태에서 5픽셀 미만으로 움직인 건 손떨림으로 간주하고 무시합니다.
+            # 5픽셀 이상 크게 벗어났을 때만 본격적인 '드래그 상태'로 진입합니다!
+            if not self._is_dragging:
+                if (event.globalPos() - getattr(self, '_click_start_pos', event.globalPos())).manhattanLength() < 5:
+                    return
+                self._is_dragging = True
+
             new_pos = event.globalPos() - self._drag_start_pos
             screen = QApplication.screenAt(event.globalPos())
             if not screen: screen = QApplication.primaryScreen()
