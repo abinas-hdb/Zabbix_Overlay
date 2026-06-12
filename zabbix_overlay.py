@@ -1857,7 +1857,7 @@ class AlertCircle(QWidget):
         self.highlight_timer.timeout.connect(self.clear_highlight)
 
         self.blink_toggle_timer = QTimer(self)
-        # (기존 코드) self.blink_toggle_timer.timeout.connect(self._toggle_blink_state)
+        self.blink_toggle_timer.timeout.connect(self._toggle_blink_state)
         
         # ★ 추가됨: 새로고침 대기(로딩) 상태 변수 및 타이머
         self.is_waiting_for_data = False
