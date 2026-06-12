@@ -1857,7 +1857,32 @@ class AlertCircle(QWidget):
         self.highlight_timer.timeout.connect(self.clear_highlight)
 
         self.blink_toggle_timer = QTimer(self)
-        self.blink_toggle_timer.timeout.connect(self._toggle_blink_state)
+        # (기존 코드) self.blink_toggle_timer.timeout.connect(self._toggle_blink_state)
+        
+        # ★ 추가됨: 새로고침 대기(로딩) 상태 변수 및 타이머
+        self.is_waiting_for_data = False
+        self.loading_angle = 0
+        self.loading_timer = QTimer(self)
+        self.loading_timer.timeout.connect(self._update_loading_angle)
+
+    def _update_loading_angle(self):
+        self.loading_angle = (self.loading_angle + 20) % 360
+        self.update()
+
+    def start_loading(self):
+        self.is_waiting_for_data = True
+        self.loading_timer.start(30)
+        self.update()
+
+    def stop_loading_and_show(self):
+        if not self.is_waiting_for_data: return
+        self.is_waiting_for_data = False
+        self.loading_timer.stop()
+        self.update()
+        if not self.is_error_state:
+            # 닫혀있을 때만 열어줌
+            if not (getattr(self, 'list_window', None) and self.list_window.isVisible()):
+                self.window().toggle_circle_list(self)
         
     def _update_hover(self, val):
         self.hover_progress = val
@@ -2028,8 +2053,31 @@ class AlertCircle(QWidget):
             font.setPixelSize(int(self.width() * 0.4)) 
             font.setBold(True)
             painter.setFont(font)
-            painter.drawText(0, 0, self.width(), self.height(), Qt.AlignCenter, self.error_char)
-            return
+        painter.setPen(num_color)
+        painter.drawText(0, int(self.height() * 0.45), self.width(), int(self.height() * 0.45), Qt.AlignCenter, count_str)
+
+        # =========================================================
+        # ★ 새로 추가됨: 데이터 갱신 대기 중일 때 빙글빙글 도는 로딩 스피너 그리기
+        if getattr(self, 'is_waiting_for_data', False):
+            # 배경을 반투명하게 한 번 더 덮어서 비활성화 느낌 강조
+            painter.setBrush(QBrush(QColor(0, 0, 0, 140 if is_light else 180)))
+            painter.setPen(Qt.NoPen)
+            if "rectangle" in theme:
+                painter.drawRoundedRect(rect, 12, 12)
+            else:
+                painter.drawEllipse(rect)
+                
+            # 빙글빙글 도는 스피너 호 그리기
+            spin_pen = QPen(glow_color, max(3, int(self.width() * 0.06)))
+            spin_pen.setCapStyle(Qt.RoundCap)
+            painter.setPen(spin_pen)
+            
+            margin = int(self.width() * 0.25)
+            spinner_rect = rect.adjusted(margin, margin, -margin, -margin)
+            
+            start_angle = -self.loading_angle * 16
+            span_angle = 120 * 16 # 120도 길이의 꼬리
+            painter.drawArc(spinner_rect, start_angle, span_angle)
 
         painter.setPen(text_color)
         font = QFont("IBM Plex Sans KR") 
@@ -2140,7 +2188,13 @@ class AlertCircle(QWidget):
             if self.is_error_state: return 
             if not self._is_dragging:
                 if not self.window().is_resize_mode:
-                    self.window().toggle_circle_list(self)
+                    # ★ 수정됨: 열려있으면 즉시 닫고, 닫혀있는데 통신 중이면 로딩 시작, 아니면 즉시 열기
+                    if getattr(self, 'list_window', None) and self.list_window.isVisible():
+                        self.window().toggle_circle_list(self)
+                    elif getattr(self.window(), 'is_fetching', False):
+                        self.start_loading()
+                    else:
+                        self.window().toggle_circle_list(self)
             else:
                 self.window().save_current_settings()
 
@@ -2909,6 +2963,9 @@ class ZabbixDesktopWidget(QWidget):
             
         logger.debug(tr_log("[API 갱신] 타이머 또는 수동 조작에 의해 Zabbix 데이터 갱신 요청", "[API Update] Zabbix data update requested by timer or manual action"))
         
+        # ★ 추가됨 1: 통신 시작할 때 플래그 켜기
+        self.is_fetching = True
+        
         # 주기적으로 최상단 속성 및 실제 화면 컴포지팅 레이어 강제 재조립
         if self.config.get("always_on_top", False):
             apply_z_order(self, True)
@@ -3039,6 +3096,12 @@ class ZabbixDesktopWidget(QWidget):
                     circle.list_window.current_page = max(0, circle.list_window.total_pages - 1)
                 circle.list_window.set_refreshing_state(False)
 
+        # ★ 추가됨 2: 통신 끝나면 플래그 끄고, 기다리던 원의 리스트 창 열어주기
+        self.is_fetching = False
+        for circle in self.circles:
+            if getattr(circle, 'is_waiting_for_data', False):
+                circle.stop_loading_and_show()
+
     def on_api_error(self, error_msg):
         for circle in self.circles:
             if getattr(circle, 'list_window', None) and circle.list_window.isVisible():
@@ -3053,6 +3116,12 @@ class ZabbixDesktopWidget(QWidget):
                 self.toast_manager.show(f"🚨 연결 오류: {error_msg}", "error", self.config.get("noti_duration", 7))
             for i, char in enumerate(["E", "R", "R", "O", "R", "!"]):
                 self.circles[i].set_error_state(char)
+                
+        # ★ 추가됨 3: 통신 에러가 났을 때도 무한 로딩에 빠지지 않게 플래그 끄고 락 해제
+        self.is_fetching = False
+        for circle in self.circles:
+            if getattr(circle, 'is_waiting_for_data', False):
+                circle.stop_loading_and_show()
 
     def toggle_autostart(self):
         enable = self.act_auto.isChecked()
