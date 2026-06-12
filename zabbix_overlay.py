@@ -1967,7 +1967,7 @@ class AlertCircle(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         
-        # ★ 핵심 1: 클릭 애니메이션 (화면 중심을 축으로 삼아 전체 비율을 축소/원상복구 시킴)
+        # 1. 클릭 애니메이션 (화면 중심을 축으로 삼아 전체 비율을 축소/원상복구 시킴)
         if self.click_scale != 1.0:
             painter.translate(self.width() / 2.0, self.height() / 2.0)
             painter.scale(self.click_scale, self.click_scale)
@@ -1977,9 +1977,9 @@ class AlertCircle(QWidget):
         is_light = self.window().config.get("color_mode", "dark") == "light"
         
         progress = max(0.0, min(1.0, (self.current_opacity - 0.3) / 0.7))
-        
         base_bg = QColor(255, 255, 255, 240) if is_light else QColor(28, 28, 32, 230)
 
+        # 색상 세팅
         if self.is_error_state:
             glow_color = QColor(231, 76, 60)
             border_color = glow_color if self.blink_toggle else (QColor(0, 0, 0, 30) if is_light else QColor(255, 255, 255, 50))
@@ -1997,7 +1997,6 @@ class AlertCircle(QWidget):
                 num_color = text_color
             else:
                 glow_color = self.circle_color
-                
                 active_border_alpha = 255 if is_light else 180
                 current_border_alpha = int(active_border_alpha * (0.3 + 0.7 * progress))
                 border_color = QColor(glow_color.red(), glow_color.green(), glow_color.blue(), current_border_alpha)
@@ -2021,6 +2020,7 @@ class AlertCircle(QWidget):
                     text_color = active_text
                     num_color = glow_color
 
+        # 2. 배경 및 테두리 그리기
         painter.setBrush(QBrush(base_bg))
         pen_width = 3 if self.is_highlighted or self.is_error_state else 2
         painter.setPen(QPen(border_color, pen_width))
@@ -2031,14 +2031,12 @@ class AlertCircle(QWidget):
         else:
             painter.drawEllipse(rect)
 
-        # ★ 핵심 2: 마우스 호버 시 바탕색 위에 오버레이 효과를 한 꺼풀 덮어씌움 (반응성 추가)
+        # 3. 호버 오버레이 효과
         if self.hover_progress > 0:
             if is_light:
-                # 라이트 모드(배경이 이미 흰색)에서는 옅은 검은색을 덮어 살짝 어두워지는 입체감을 줌
                 hover_alpha = int(25 * self.hover_progress)
                 painter.setBrush(QBrush(QColor(0, 0, 0, hover_alpha)))
             else:
-                # 다크 모드(어두운 배경)에서는 하얀빛을 덮어 밝아지는 효과 유지
                 hover_alpha = int(40 * self.hover_progress)
                 painter.setBrush(QBrush(QColor(255, 255, 255, hover_alpha)))
                 
@@ -2047,19 +2045,9 @@ class AlertCircle(QWidget):
                 painter.drawRoundedRect(rect, 12, 12)
             else:
                 painter.drawEllipse(rect)
-        if self.is_error_state:
-            painter.setPen(text_color)
-            font = QFont("IBM Plex Sans KR") 
-            font.setPixelSize(int(self.width() * 0.4)) 
-            font.setBold(True)
-            painter.setFont(font)
-        painter.setPen(num_color)
-        painter.drawText(0, int(self.height() * 0.45), self.width(), int(self.height() * 0.45), Qt.AlignCenter, count_str)
 
-        # =========================================================
-        # ★ 새로 추가됨: 데이터 갱신 대기 중일 때 빙글빙글 도는 로딩 스피너 그리기
+        # 4. 데이터 갱신 대기 중(로딩) 스피너 그리기
         if getattr(self, 'is_waiting_for_data', False):
-            # 배경을 반투명하게 한 번 더 덮어서 비활성화 느낌 강조
             painter.setBrush(QBrush(QColor(0, 0, 0, 140 if is_light else 180)))
             painter.setPen(Qt.NoPen)
             if "rectangle" in theme:
@@ -2067,7 +2055,6 @@ class AlertCircle(QWidget):
             else:
                 painter.drawEllipse(rect)
                 
-            # 빙글빙글 도는 스피너 호 그리기
             spin_pen = QPen(glow_color, max(3, int(self.width() * 0.06)))
             spin_pen.setCapStyle(Qt.RoundCap)
             painter.setPen(spin_pen)
@@ -2079,6 +2066,17 @@ class AlertCircle(QWidget):
             span_angle = 120 * 16 # 120도 길이의 꼬리
             painter.drawArc(spinner_rect, start_angle, span_angle)
 
+        # 5. 에러 상태일 경우 글자 렌더링하고 즉시 종료 (오류 방지 핵심)
+        if self.is_error_state:
+            painter.setPen(text_color)
+            font = QFont("IBM Plex Sans KR") 
+            font.setPixelSize(int(self.width() * 0.4)) 
+            font.setBold(True)
+            painter.setFont(font)
+            painter.drawText(0, 0, self.width(), self.height(), Qt.AlignCenter, self.error_char)
+            return
+
+        # 6. 정상 상태일 경우 심각도 이름 렌더링
         painter.setPen(text_color)
         font = QFont("IBM Plex Sans KR") 
         font.setBold(True) 
@@ -2096,7 +2094,7 @@ class AlertCircle(QWidget):
         painter.setFont(font)
         painter.drawText(0, int(self.height() * 0.15), self.width(), int(self.height() * 0.35), Qt.AlignCenter, self.severity_name)
 
-        # 숫자 동적 폰트 크기 계산 (자릿수 길어짐 방지 포함)
+        # 7. 숫자 렌더링
         count_str = str(self.alert_count)
         num_pixel_size = int(self.width() * 0.34)
         font.setPixelSize(num_pixel_size)
@@ -2111,7 +2109,7 @@ class AlertCircle(QWidget):
         painter.setFont(font)
         painter.setPen(num_color)
         painter.drawText(0, int(self.height() * 0.45), self.width(), int(self.height() * 0.45), Qt.AlignCenter, count_str)
-
+        
     def enterEvent(self, event):
         if self.is_error_state: return 
         self.opacity_anim.stop()
