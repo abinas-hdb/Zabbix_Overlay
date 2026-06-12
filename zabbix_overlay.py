@@ -972,6 +972,49 @@ class ToastManager:
         for t in list(self.toasts):
             t.fade_and_close()
 
+# ==========================================
+# 리스트 아이템용 파동 애니메이션 (Ripple Dot)
+# ==========================================
+class RippleDot(QWidget):
+    def __init__(self, hex_color, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(16, 18) # 우측 텍스트와 높이를 맞추기 위한 여백
+        self.base_color = QColor(hex_color)
+        self.progress = 0.0
+        
+        # 1.5초(1500ms) 주기로 무한 반복되는 애니메이션
+        self.anim = QVariantAnimation(self)
+        self.anim.setDuration(1500) 
+        self.anim.setStartValue(0.0)
+        self.anim.setEndValue(1.0)
+        self.anim.setLoopCount(-1) # 무한 반복(-1)
+        self.anim.valueChanged.connect(self._update_progress)
+        self.anim.start()
+        
+    def _update_progress(self, val):
+        self.progress = val
+        self.update()
+        
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        # 그리기 중심점 (텍스트 라인과 맞추기 위해 Y축을 살짝 내림)
+        center = QPointF(self.width() / 2.0, self.height() / 2.0 + 1.0)
+        base_radius = 3.0
+        
+        # 1. 배경에서 퍼져나가는 파동 (크기는 커지고 투명도는 낮아짐)
+        ripple_radius = base_radius + (self.width() / 2.0 - base_radius) * self.progress
+        alpha = int(255 * (1.0 - self.progress))
+        ripple_color = QColor(self.base_color.red(), self.base_color.green(), self.base_color.blue(), alpha)
+        
+        painter.setBrush(QBrush(ripple_color))
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(center, ripple_radius, ripple_radius)
+        
+        # 2. 중앙에 단단하게 고정된 점
+        painter.setBrush(QBrush(self.base_color))
+        painter.drawEllipse(center, base_radius, base_radius)
 
 class AlertListWindow(QWidget):
     def __init__(self, title, hex_color, problems_list, items_per_page=5, config=None, owner_window=None):
@@ -1138,9 +1181,8 @@ class AlertListWindow(QWidget):
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
         
-        dot_lbl = QLabel("●")
-        dot_lbl.setStyleSheet(f"color: {self.hex_color}; font-size: 11px; background: transparent; border: none;")
-        dot_lbl.setFixedWidth(16)
+        # ★ 기존 QLabel을 지우고, 무한 반복 파동 애니메이션이 들어간 RippleDot으로 교체!
+        dot_lbl = RippleDot(self.hex_color)
         
         safe_title = issue_data['name'].replace('<', '&lt;').replace('>', '&gt;')
         title_lbl = QLabel(f"<span style='font-family: \"IBM Plex Sans KR\", sans-serif; color: {title_color}; font-size: 13px; font-weight: bold;'>{safe_title}</span>")
@@ -1794,6 +1836,18 @@ class AlertCircle(QWidget):
         self.opacity_anim.setDuration(250) 
         self.opacity_anim.valueChanged.connect(self._update_opacity)
 
+        # ★ 추가 1: 호버 시 전체적으로 밝아지는 유리광 효과 애니메이션
+        self.hover_progress = 0.0
+        self.hover_anim = QVariantAnimation(self)
+        self.hover_anim.setDuration(150)
+        self.hover_anim.valueChanged.connect(self._update_hover)
+
+        # ★ 추가 2: 클릭 시 꾹 눌려지는 물리적 스케일 애니메이션
+        self.click_scale = 1.0
+        self.click_anim = QVariantAnimation(self)
+        self.click_anim.setDuration(100)
+        self.click_anim.valueChanged.connect(self._update_scale)
+
         self.is_highlighted = False
         self.blink_toggle = False
         self.highlight_type = "created" 
@@ -1804,6 +1858,14 @@ class AlertCircle(QWidget):
 
         self.blink_toggle_timer = QTimer(self)
         self.blink_toggle_timer.timeout.connect(self._toggle_blink_state)
+        
+    def _update_hover(self, val):
+        self.hover_progress = val
+        self.update()
+
+    def _update_scale(self, val):
+        self.click_scale = val
+        self.update()
         
     def set_error_state(self, char):
         self.is_error_state = True
@@ -1880,10 +1942,15 @@ class AlertCircle(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         
+        # ★ 핵심 1: 클릭 애니메이션 (화면 중심을 축으로 삼아 전체 비율을 축소/원상복구 시킴)
+        if self.click_scale != 1.0:
+            painter.translate(self.width() / 2.0, self.height() / 2.0)
+            painter.scale(self.click_scale, self.click_scale)
+            painter.translate(-self.width() / 2.0, -self.height() / 2.0)
+        
         theme = self.window().config.get("theme", "circle")
         is_light = self.window().config.get("color_mode", "dark") == "light"
         
-        # ★ 핵심 1: 애니메이션 진행도를 0.0 ~ 1.0 사이의 비율로 정규화
         progress = max(0.0, min(1.0, (self.current_opacity - 0.3) / 0.7))
         
         base_bg = QColor(255, 255, 255, 240) if is_light else QColor(28, 28, 32, 230)
@@ -1906,22 +1973,19 @@ class AlertCircle(QWidget):
             else:
                 glow_color = self.circle_color
                 
-                # 부드러운 테두리 투명도 보간 (흐릿함 -> 선명함)
                 active_border_alpha = 255 if is_light else 180
                 current_border_alpha = int(active_border_alpha * (0.3 + 0.7 * progress))
                 border_color = QColor(glow_color.red(), glow_color.green(), glow_color.blue(), current_border_alpha)
                 
                 active_text = QColor(31, 41, 55) if is_light else QColor(255, 255, 255)
-                inactive_text = QColor(156, 163, 175) if is_light else QColor(113, 113, 122) # 회색
+                inactive_text = QColor(156, 163, 175) if is_light else QColor(113, 113, 122) 
                 
                 if self.alert_count == 0:
-                    # ★ 핵심 2: 글자색을 회색 -> 원래 색상으로 프레임마다 부드럽게 섞어줌 (깜빡임 제거)
                     r = int(inactive_text.red() + (active_text.red() - inactive_text.red()) * progress)
                     g = int(inactive_text.green() + (active_text.green() - inactive_text.green()) * progress)
                     b = int(inactive_text.blue() + (active_text.blue() - inactive_text.blue()) * progress)
                     text_color = QColor(r, g, b)
                     
-                    # 숫자 색상도 동일하게 서서히 밝아지도록 보간
                     dim_num = QColor(glow_color.red(), glow_color.green(), glow_color.blue(), 80)
                     nr = int(dim_num.red() + (glow_color.red() - dim_num.red()) * progress)
                     ng = int(dim_num.green() + (glow_color.green() - dim_num.green()) * progress)
@@ -1942,6 +2006,22 @@ class AlertCircle(QWidget):
         else:
             painter.drawEllipse(rect)
 
+        # ★ 핵심 2: 마우스 호버 시 바탕색 위에 오버레이 효과를 한 꺼풀 덮어씌움 (반응성 추가)
+        if self.hover_progress > 0:
+            if is_light:
+                # 라이트 모드(배경이 이미 흰색)에서는 옅은 검은색을 덮어 살짝 어두워지는 입체감을 줌
+                hover_alpha = int(25 * self.hover_progress)
+                painter.setBrush(QBrush(QColor(0, 0, 0, hover_alpha)))
+            else:
+                # 다크 모드(어두운 배경)에서는 하얀빛을 덮어 밝아지는 효과 유지
+                hover_alpha = int(40 * self.hover_progress)
+                painter.setBrush(QBrush(QColor(255, 255, 255, hover_alpha)))
+                
+            painter.setPen(Qt.NoPen)
+            if "rectangle" in theme:
+                painter.drawRoundedRect(rect, 12, 12)
+            else:
+                painter.drawEllipse(rect)
         if self.is_error_state:
             painter.setPen(text_color)
             font = QFont("IBM Plex Sans KR") 
@@ -1955,13 +2035,10 @@ class AlertCircle(QWidget):
         font = QFont("IBM Plex Sans KR") 
         font.setBold(True) 
         
-        # ★ 수정 1: 시작 폰트 크기를 다시 큼직하게(0.24) 잡습니다. (짧은 한글을 위해)
         pixel_size = int(self.width() * 0.24)
         font.setPixelSize(pixel_size)
         fm = QFontMetrics(font)
         
-        # ★ 수정 2: 글자의 가로 길이가 여백 한계치(너비 - 20px)를 넘을 때만 강제로 폰트를 줄입니다.
-        # (영어처럼 긴 단어만 이 반복문을 타면서 크기가 작아집니다)
         max_text_width = self.width() - 20
         while fm.boundingRect(self.severity_name).width() > max_text_width and pixel_size > 8:
             pixel_size -= 1
@@ -1971,13 +2048,12 @@ class AlertCircle(QWidget):
         painter.setFont(font)
         painter.drawText(0, int(self.height() * 0.15), self.width(), int(self.height() * 0.35), Qt.AlignCenter, self.severity_name)
 
-        # ★ 수정: 알림 숫자도 자릿수가 길어지면 원을 뚫지 않게 자동 축소되도록 로직 추가
+        # 숫자 동적 폰트 크기 계산 (자릿수 길어짐 방지 포함)
         count_str = str(self.alert_count)
         num_pixel_size = int(self.width() * 0.34)
         font.setPixelSize(num_pixel_size)
         fm = QFontMetrics(font)
         
-        # 하단부 곡률을 감안하여 여백을 넉넉히(24px) 줍니다.
         max_num_width = self.width() - 24
         while fm.boundingRect(count_str).width() > max_num_width and num_pixel_size > 8:
             num_pixel_size -= 1
@@ -1985,8 +2061,6 @@ class AlertCircle(QWidget):
             fm = QFontMetrics(font)
 
         painter.setFont(font)
-        
-        # 적용된 보간 색상으로 렌더링
         painter.setPen(num_color)
         painter.drawText(0, int(self.height() * 0.45), self.width(), int(self.height() * 0.45), Qt.AlignCenter, count_str)
 
@@ -1997,6 +2071,12 @@ class AlertCircle(QWidget):
         self.opacity_anim.setEndValue(1.0) 
         self.opacity_anim.start()
 
+        # ★ 오버레이(밝기) 효과 시작
+        self.hover_anim.stop()
+        self.hover_anim.setStartValue(self.hover_progress)
+        self.hover_anim.setEndValue(1.0)
+        self.hover_anim.start()
+
     def leaveEvent(self, event):
         if self.is_error_state: return
         self.opacity_anim.stop()
@@ -2005,6 +2085,12 @@ class AlertCircle(QWidget):
         self.opacity_anim.setEndValue(target_opacity)
         self.opacity_anim.start()
 
+        # ★ 오버레이(밝기) 효과 해제
+        self.hover_anim.stop()
+        self.hover_anim.setStartValue(self.hover_progress)
+        self.hover_anim.setEndValue(0.0)
+        self.hover_anim.start()
+
     def contextMenuEvent(self, event):
         self.window().main_menu.exec_(event.globalPos())
 
@@ -2012,6 +2098,12 @@ class AlertCircle(QWidget):
         if event.button() == Qt.LeftButton:
             self._is_dragging = False
             self._drag_start_pos = event.globalPos() - self.window().pos()
+            
+            # ★ 원이 눌리는(Scale Down) 애니메이션
+            self.click_anim.stop()
+            self.click_anim.setStartValue(self.click_scale)
+            self.click_anim.setEndValue(0.92) # 원을 기존 크기의 92%로 압축
+            self.click_anim.start()
 
     def mouseMoveEvent(self, event):
         if event.buttons() == Qt.LeftButton:
@@ -2029,13 +2121,9 @@ class AlertCircle(QWidget):
             if abs(ny - rect.top()) < margin: ny = rect.top()
             elif abs(ny + win_h - rect.bottom()) < margin: ny = rect.bottom() - win_h
             
-            # 1. 메인 창 이동
             self.window().move(nx, ny)
-            
-            # 2. 메인 창이 이동하자마자 자석처럼 리스트 창의 위치를 업데이트
             self.update_list_position()
             
-            # 혹시 다른 원의 리스트 창이 열려있다면 그것도 끌고 옴
             if hasattr(self.window(), 'circles'):
                 for circle in self.window().circles:
                     if circle != self and getattr(circle, 'list_window', None) and circle.list_window.isVisible():
@@ -2043,6 +2131,12 @@ class AlertCircle(QWidget):
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
+            # ★ 마우스를 떼면 원이 다시 원래 크기로 튀어 오르는 애니메이션
+            self.click_anim.stop()
+            self.click_anim.setStartValue(self.click_scale)
+            self.click_anim.setEndValue(1.0)
+            self.click_anim.start()
+            
             if self.is_error_state: return 
             if not self._is_dragging:
                 if not self.window().is_resize_mode:
@@ -2050,7 +2144,6 @@ class AlertCircle(QWidget):
             else:
                 self.window().save_current_settings()
 
-    # 리스트 창의 위치만 계산하는 전용 모듈
     def update_list_position(self):
         try:
             if not getattr(self, 'list_window', None): return
@@ -2126,7 +2219,6 @@ class AlertCircle(QWidget):
             self.severity_name, self.circle_color.name(), self.problems,
             self.window().config.get("items_per_page", 5), self.window().config, self.window()
         )
-        # 리스트 창이 생성되자마자 알맞은 위치로 이동시킴
         self.update_list_position()
         self.list_window.show()
 
