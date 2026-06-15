@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QMenu, QAction,
                              QListWidget, QLabel, QPushButton, QHBoxLayout, QMessageBox, 
                              QListWidgetItem, QDialog, QFormLayout, QDialogButtonBox, 
                              QPlainTextEdit, QComboBox, QCheckBox, QFrame, QBoxLayout,
-                             QTabWidget, QTextBrowser, QSystemTrayIcon, QWidgetAction, QSizePolicy, QGridLayout, QSizeGrip, QGraphicsDropShadowEffect, QScrollBar)
+                             QTabWidget, QTextBrowser, QSystemTrayIcon, QWidgetAction, QSizePolicy, QGridLayout, QSizeGrip, QGraphicsDropShadowEffect, QScrollBar, QInputDialog)
 from PyQt5.QtCore import Qt, QPoint, QVariantAnimation, QThread, pyqtSignal, QTimer, QEvent, QSize, QSharedMemory, QPointF
 from PyQt5.QtGui import QPainter, QColor, QBrush, QFont, QPen, QFontMetrics, QFontDatabase, QIcon, QPixmap, QPolygonF
 
@@ -196,7 +196,16 @@ class Translator:
             "lbl_unknown_item": "알 수 없는 아이템",
             "lbl_unknown_user": "알 수 없는 사용자 {uid}",
             "btn_ok": "확인",
-            "btn_cancel": "취소"
+            "btn_cancel": "취소",
+            "menu_custom": "직접 입력...",
+            "custom_sec_format": "직접 입력... ({val}초)",
+            "custom_item_format": "직접 입력... ({val}개)",
+            "title_custom_noti": "알림 유지 시간",
+            "msg_custom_noti": "알림 유지 시간을 초 단위로 입력하세요.\n(0: 끄기, -1: 수동 종료)",
+            "title_custom_ref": "새로고침 주기",
+            "msg_custom_ref": "새로고침 주기를 초 단위로 입력하세요.\n(최소 1초 이상)",
+            "title_custom_page": "페이지당 표시 개수",
+            "msg_custom_page": "리스트에 한 번에 표시할 알림 개수를 입력하세요.\n(최소 1개 이상)"
         }
         # 영어 기본 (en.json)
         en_data = {
@@ -312,7 +321,16 @@ class Translator:
             "lbl_unknown_item": "Unknown Item",
             "lbl_unknown_user": "Unknown User {uid}",
             "btn_ok": "OK",
-            "btn_cancel": "Cancel"
+            "btn_cancel": "Cancel",
+            "menu_custom": "Custom...",
+            "custom_sec_format": "Custom... ({val}s)",
+            "custom_item_format": "Custom... ({val} items)",
+            "title_custom_noti": "Notification Duration",
+            "msg_custom_noti": "Enter duration in seconds.\n(0: Off, -1: Manual close)",
+            "title_custom_ref": "Refresh Interval",
+            "msg_custom_ref": "Enter refresh interval in seconds.\n(Min: 1s)",
+            "title_custom_page": "Items per Page",
+            "msg_custom_page": "Enter number of alerts to display per page.\n(Min: 1)"
         }
         with open(os.path.join(LANG_DIR, "ko.json"), 'w', encoding='utf-8') as f:
             json.dump(ko_data, f, indent=4, ensure_ascii=False)
@@ -2507,7 +2525,8 @@ class ZabbixDesktopWidget(QWidget):
         self.setWindowFlags(flags)
         
         self.main_layout = QGridLayout()
-        self.main_layout.setSpacing(0 if "rectangle" in self.config.get("theme", "") else 15)
+        # ★ 원형 테마일 때의 간격을 15에서 6으로 좁혀서 오밀조밀하게 배치합니다.
+        self.main_layout.setSpacing(0 if "rectangle" in self.config.get("theme", "") else 6)
         self.main_layout.setContentsMargins(15, 15, 15, 15)
         
         self.circle_disaster = AlertCircle("#E74C3C", tr("sev_disaster", "심각"))  
@@ -2696,7 +2715,16 @@ class ZabbixDesktopWidget(QWidget):
             noti_menu.addAction(act)
             self.dict_noti[secs] = act
 
+        custom_str = tr("menu_custom", "직접 입력...")
+
+        # ★ 추가됨: 알림 유지 시간 직접 입력
+        noti_menu.addSeparator()
+        self.act_custom_noti = QAction(custom_str, noti_menu, checkable=True)
+        self.act_custom_noti.triggered.connect(self.prompt_custom_noti)
+        noti_menu.addAction(self.act_custom_noti)
+
         pos_menu = self.main_menu.addMenu(tr("menu_noti_pos", "알림 위치"))
+
         self.dict_pos = {}
         for key, label_key, def_label in [("bottom_right", "pos_br", "우측 하단"), ("bottom_left", "pos_bl", "좌측 하단"), ("top_right", "pos_tr", "우측 상단"), ("top_left", "pos_tl", "좌측 상단")]:
             act = QAction(tr(label_key, def_label), pos_menu, checkable=True)
@@ -2713,6 +2741,11 @@ class ZabbixDesktopWidget(QWidget):
             refresh_menu.addAction(act)
             self.dict_ref[secs] = act
 
+        refresh_menu.addSeparator()
+        self.act_custom_ref = QAction(custom_str, refresh_menu, checkable=True)
+        self.act_custom_ref.triggered.connect(self.prompt_custom_ref)
+        refresh_menu.addAction(self.act_custom_ref)
+
         page_menu = self.main_menu.addMenu(tr("menu_items_page", "페이지당 표시 개수"))
         self.dict_page = {}
         for cnt in [3, 5, 7, 10, 15]:
@@ -2720,6 +2753,14 @@ class ZabbixDesktopWidget(QWidget):
             act.triggered.connect(lambda checked, c=cnt: self.set_items_per_page(c))
             page_menu.addAction(act)
             self.dict_page[cnt] = act
+
+        # ★ 추가됨: 페이지당 개수 직접 입력
+        page_menu.addSeparator()
+        self.act_custom_page = QAction(custom_str, page_menu, checkable=True)
+        self.act_custom_page.triggered.connect(self.prompt_custom_page)
+        page_menu.addAction(self.act_custom_page)
+            
+        self.main_menu.addSeparator()
             
         self.main_menu.addSeparator()
         
@@ -2786,6 +2827,7 @@ class ZabbixDesktopWidget(QWidget):
         dlg.exec_()
 
     def sync_menu_states(self):
+        
         logger.debug(tr_log("[UI 액션] 설정 메뉴(우클릭) 열기", "[UI Action] Settings menu (right-click) opened"))
         self.act_resize.setChecked(self.is_resize_mode)
         self.act_top.setChecked(self.config.get("always_on_top", False))
@@ -2811,6 +2853,40 @@ class ZabbixDesktopWidget(QWidget):
         for val, act in self.dict_page.items(): act.setChecked(val == self.config.get("items_per_page", 5))
         self.act_debug.setChecked(self.config.get("debug_mode", False)) 
         self.act_noti_update.setChecked(self.config.get("noti_on_update", True))
+
+        # ★ 직접 입력된 값이면 '직접 입력...'에 체크 및 설정된 값을 괄호로 보여줌 (다국어 연동)
+        curr_noti = self.config.get("noti_duration", 7)
+        is_cust_noti = curr_noti not in self.dict_noti
+        self.act_custom_noti.setChecked(is_cust_noti)
+        self.act_custom_noti.setText(tr("custom_sec_format", "직접 입력... ({val}초)").format(val=curr_noti) if is_cust_noti else tr("menu_custom", "직접 입력..."))
+        
+        curr_ref = self.config.get("refresh_interval", 5)
+        is_cust_ref = curr_ref not in self.dict_ref
+        self.act_custom_ref.setChecked(is_cust_ref)
+        self.act_custom_ref.setText(tr("custom_sec_format", "직접 입력... ({val}초)").format(val=curr_ref) if is_cust_ref else tr("menu_custom", "직접 입력..."))
+        
+        curr_page = self.config.get("items_per_page", 5)
+        is_cust_page = curr_page not in self.dict_page
+        self.act_custom_page.setChecked(is_cust_page)
+        self.act_custom_page.setText(tr("custom_item_format", "직접 입력... ({val}개)").format(val=curr_page) if is_cust_page else tr("menu_custom", "직접 입력..."))
+
+    def prompt_custom_noti(self):
+        title = tr("title_custom_noti", "알림 유지 시간")
+        msg = tr("msg_custom_noti", "알림 유지 시간을 초 단위로 입력하세요.\n(0: 끄기, -1: 수동 종료)")
+        val, ok = QInputDialog.getInt(self, title, msg, self.config.get("noti_duration", 7), -1, 86400)
+        if ok: self.set_noti_duration(val)
+
+    def prompt_custom_ref(self):
+        title = tr("title_custom_ref", "새로고침 주기")
+        msg = tr("msg_custom_ref", "새로고침 주기를 초 단위로 입력하세요.\n(최소 1초 이상)")
+        val, ok = QInputDialog.getInt(self, title, msg, self.config.get("refresh_interval", 5), 1, 86400)
+        if ok: self.set_refresh_interval(val)
+
+    def prompt_custom_page(self):
+        title = tr("title_custom_page", "페이지당 표시 개수")
+        msg = tr("msg_custom_page", "리스트에 한 번에 표시할 알림 개수를 입력하세요.\n(최소 1개 이상)")
+        val, ok = QInputDialog.getInt(self, title, msg, self.config.get("items_per_page", 5), 1, 1000)
+        if ok: self.set_items_per_page(val)
 
     # 언어 변경 실행 함수
     def set_language(self, lang_code):
