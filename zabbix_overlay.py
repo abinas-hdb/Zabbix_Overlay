@@ -1836,30 +1836,34 @@ class AlertCircle(QWidget):
         self.opacity_anim.setDuration(250) 
         self.opacity_anim.valueChanged.connect(self._update_opacity)
 
-        # ★ 추가 1: 호버 시 전체적으로 밝아지는 유리광 효과 애니메이션
         self.hover_progress = 0.0
         self.hover_anim = QVariantAnimation(self)
         self.hover_anim.setDuration(150)
         self.hover_anim.valueChanged.connect(self._update_hover)
 
-        # ★ 추가 2: 클릭 시 꾹 눌려지는 물리적 스케일 애니메이션
         self.click_scale = 1.0
         self.click_anim = QVariantAnimation(self)
         self.click_anim.setDuration(100)
         self.click_anim.valueChanged.connect(self._update_scale)
 
         self.is_highlighted = False
-        self.blink_toggle = False
         self.highlight_type = "created" 
         
         self.highlight_timer = QTimer(self)
         self.highlight_timer.setSingleShot(True)
         self.highlight_timer.timeout.connect(self.clear_highlight)
 
-        self.blink_toggle_timer = QTimer(self)
-        self.blink_toggle_timer.timeout.connect(self._toggle_blink_state)
+        # ★ 기존의 딱딱한 깜빡임 타이머를 삭제하고, 부드럽게 숨쉬는(Pulse) 파동 애니메이션 추가
+        self.blink_progress = 0.0
+        self.blink_anim = QVariantAnimation(self)
+        self.blink_anim.setDuration(1200) # 1.2초 동안 한 사이클 (부드러운 호흡 속도)
+        self.blink_anim.setKeyValueAt(0.0, 0.0)
+        self.blink_anim.setKeyValueAt(0.5, 1.0)
+        self.blink_anim.setKeyValueAt(1.0, 0.0)
+        self.blink_anim.setLoopCount(-1) # 무한 반복
+        self.blink_anim.valueChanged.connect(self._update_blink_progress)
         
-        # ★ 추가됨: 새로고침 대기(로딩) 상태 변수 및 타이머
+        # 새로고침 대기(로딩) 상태 변수 및 타이머
         self.is_waiting_for_data = False
         self.loading_angle = 0
         self.loading_timer = QTimer(self)
@@ -1880,9 +1884,13 @@ class AlertCircle(QWidget):
         self.loading_timer.stop()
         self.update()
         if not self.is_error_state:
-            # 닫혀있을 때만 열어줌
             if not (getattr(self, 'list_window', None) and self.list_window.isVisible()):
                 self.window().toggle_circle_list(self)
+
+    # ★ 새롭게 추가된 블링크(호흡) 애니메이션 업데이트 함수
+    def _update_blink_progress(self, val):
+        self.blink_progress = val
+        self.update()
         
     def _update_hover(self, val):
         self.hover_progress = val
@@ -1895,34 +1903,28 @@ class AlertCircle(QWidget):
     def set_error_state(self, char):
         self.is_error_state = True
         self.error_char = char
-        self.blink_toggle = True
-        self.blink_toggle_timer.start(500) 
+        self.blink_anim.start() # 부드러운 깜빡임 시작
         self.update()
 
     def clear_error_state(self):
         self.is_error_state = False
         self.error_char = ""
-        self.blink_toggle_timer.stop()
-        self.blink_toggle = False
+        self.blink_anim.stop()
+        self.blink_progress = 0.0
         self.update()
     
     def trigger_highlight(self, highlight_type):
         self.highlight_type = highlight_type
         self.is_highlighted = True
-        self.blink_toggle = True
+        self.blink_anim.start() # 부드러운 깜빡임 시작
         self.update()
-        self.blink_toggle_timer.start(300) 
         self.highlight_timer.start(3000)
-
-    def _toggle_blink_state(self):
-        self.blink_toggle = not self.blink_toggle
-        self.update()
 
     def clear_highlight(self):
         if self.is_error_state: return
         self.is_highlighted = False
-        self.blink_toggle = False
-        self.blink_toggle_timer.stop()
+        self.blink_anim.stop()
+        self.blink_progress = 0.0
         self.update()
 
     def update_data(self, problems_list):
@@ -1967,7 +1969,7 @@ class AlertCircle(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         
-        # 1. 클릭 애니메이션 (화면 중심을 축으로 삼아 전체 비율을 축소/원상복구 시킴)
+        # 1. 클릭 애니메이션
         if self.click_scale != 1.0:
             painter.translate(self.width() / 2.0, self.height() / 2.0)
             painter.scale(self.click_scale, self.click_scale)
@@ -1979,11 +1981,24 @@ class AlertCircle(QWidget):
         progress = max(0.0, min(1.0, (self.current_opacity - 0.3) / 0.7))
         base_bg = QColor(255, 255, 255, 240) if is_light else QColor(28, 28, 32, 230)
 
-        # 색상 세팅
+        # ★ 색상을 부드럽게 섞어주는 헬퍼 함수
+        def blend(c1, c2, factor):
+            return QColor(
+                int(c1.red() + (c2.red() - c1.red()) * factor),
+                int(c1.green() + (c2.green() - c1.green()) * factor),
+                int(c1.blue() + (c2.blue() - c1.blue()) * factor),
+                int(c1.alpha() + (c2.alpha() - c1.alpha()) * factor)
+            )
+
+        # 색상 세팅 (부드러운 애니메이션 적용)
         if self.is_error_state:
             glow_color = QColor(231, 76, 60)
-            border_color = glow_color if self.blink_toggle else (QColor(0, 0, 0, 30) if is_light else QColor(255, 255, 255, 50))
-            text_color = glow_color if self.blink_toggle else (QColor(31, 41, 55) if is_light else QColor(255, 255, 255))
+            base_border = QColor(0, 0, 0, 30) if is_light else QColor(255, 255, 255, 50)
+            base_text = QColor(31, 41, 55) if is_light else QColor(255, 255, 255)
+            
+            # blink_progress 값에 따라 원래 색상에서 경고 색상으로 서서히 물듦
+            border_color = blend(base_border, glow_color, self.blink_progress)
+            text_color = blend(base_text, glow_color, self.blink_progress)
             num_color = text_color
         else:
             if self.is_highlighted:
@@ -1992,8 +2007,12 @@ class AlertCircle(QWidget):
                 else:
                     glow_color = QColor(255, 255, 255) if self.highlight_type == 'created' else QColor(46, 204, 113)
                     
-                border_color = glow_color if self.blink_toggle else self.circle_color
-                text_color = glow_color if self.blink_toggle else (QColor(31, 41, 55) if is_light else QColor(255, 255, 255))
+                base_border = self.circle_color
+                base_text = QColor(31, 41, 55) if is_light else QColor(255, 255, 255)
+                
+                # blink_progress 값에 따라 서서히 물드는 효과 적용
+                border_color = blend(base_border, glow_color, self.blink_progress)
+                text_color = blend(base_text, glow_color, self.blink_progress)
                 num_color = text_color
             else:
                 glow_color = self.circle_color
@@ -2005,17 +2024,9 @@ class AlertCircle(QWidget):
                 inactive_text = QColor(156, 163, 175) if is_light else QColor(113, 113, 122) 
                 
                 if self.alert_count == 0:
-                    r = int(inactive_text.red() + (active_text.red() - inactive_text.red()) * progress)
-                    g = int(inactive_text.green() + (active_text.green() - inactive_text.green()) * progress)
-                    b = int(inactive_text.blue() + (active_text.blue() - inactive_text.blue()) * progress)
-                    text_color = QColor(r, g, b)
-                    
+                    text_color = blend(inactive_text, active_text, progress)
                     dim_num = QColor(glow_color.red(), glow_color.green(), glow_color.blue(), 80)
-                    nr = int(dim_num.red() + (glow_color.red() - dim_num.red()) * progress)
-                    ng = int(dim_num.green() + (glow_color.green() - dim_num.green()) * progress)
-                    nb = int(dim_num.blue() + (glow_color.blue() - dim_num.blue()) * progress)
-                    na = int(dim_num.alpha() + (glow_color.alpha() - dim_num.alpha()) * progress)
-                    num_color = QColor(nr, ng, nb, na)
+                    num_color = blend(dim_num, glow_color, progress)
                 else:
                     text_color = active_text
                     num_color = glow_color
@@ -2066,7 +2077,7 @@ class AlertCircle(QWidget):
             span_angle = 120 * 16 # 120도 길이의 꼬리
             painter.drawArc(spinner_rect, start_angle, span_angle)
 
-        # 5. 에러 상태일 경우 글자 렌더링하고 즉시 종료 (오류 방지 핵심)
+        # 5. 에러 상태일 경우 글자 렌더링하고 즉시 종료
         if self.is_error_state:
             painter.setPen(text_color)
             font = QFont("IBM Plex Sans KR") 
@@ -2109,7 +2120,7 @@ class AlertCircle(QWidget):
         painter.setFont(font)
         painter.setPen(num_color)
         painter.drawText(0, int(self.height() * 0.45), self.width(), int(self.height() * 0.45), Qt.AlignCenter, count_str)
-
+        
     def enterEvent(self, event):
         if self.is_error_state: return 
         self.opacity_anim.stop()
@@ -2117,7 +2128,6 @@ class AlertCircle(QWidget):
         self.opacity_anim.setEndValue(1.0) 
         self.opacity_anim.start()
 
-        # ★ 오버레이(밝기) 효과 시작
         self.hover_anim.stop()
         self.hover_anim.setStartValue(self.hover_progress)
         self.hover_anim.setEndValue(1.0)
@@ -2131,7 +2141,6 @@ class AlertCircle(QWidget):
         self.opacity_anim.setEndValue(target_opacity)
         self.opacity_anim.start()
 
-        # ★ 오버레이(밝기) 효과 해제
         self.hover_anim.stop()
         self.hover_anim.setStartValue(self.hover_progress)
         self.hover_anim.setEndValue(0.0)
@@ -2144,20 +2153,15 @@ class AlertCircle(QWidget):
         if event.button() == Qt.LeftButton:
             self._is_dragging = False
             self._drag_start_pos = event.globalPos() - self.window().pos()
-            # ★ 추가: 클릭이 시작된 최초의 정확한 마우스 좌표를 기억합니다.
             self._click_start_pos = event.globalPos() 
             
-            # ★ 원이 눌리는(Scale Down) 애니메이션
             self.click_anim.stop()
             self.click_anim.setStartValue(self.click_scale)
-            self.click_anim.setEndValue(0.92) # 원을 기존 크기의 92%로 압축
+            self.click_anim.setEndValue(0.92) 
             self.click_anim.start()
 
     def mouseMoveEvent(self, event):
         if event.buttons() == Qt.LeftButton:
-            # ★ 핵심: 드래그 판정 오차범위(Deadzone) 추가
-            # 마우스를 누른 상태에서 5픽셀 미만으로 움직인 건 손떨림으로 간주하고 무시합니다.
-            # 5픽셀 이상 크게 벗어났을 때만 본격적인 '드래그 상태'로 진입합니다!
             if not self._is_dragging:
                 if (event.globalPos() - getattr(self, '_click_start_pos', event.globalPos())).manhattanLength() < 5:
                     return
@@ -2186,7 +2190,6 @@ class AlertCircle(QWidget):
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
-            # ★ 마우스를 떼면 원이 다시 원래 크기로 튀어 오르는 애니메이션
             self.click_anim.stop()
             self.click_anim.setStartValue(self.click_scale)
             self.click_anim.setEndValue(1.0)
@@ -2195,7 +2198,6 @@ class AlertCircle(QWidget):
             if self.is_error_state: return 
             if not self._is_dragging:
                 if not self.window().is_resize_mode:
-                    # ★ 수정됨: 열려있으면 즉시 닫고, 닫혀있는데 통신 중이면 로딩 시작, 아니면 즉시 열기
                     if getattr(self, 'list_window', None) and self.list_window.isVisible():
                         self.window().toggle_circle_list(self)
                     elif getattr(self.window(), 'is_fetching', False):
