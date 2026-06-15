@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QMenu, QAction,
                              QListWidget, QLabel, QPushButton, QHBoxLayout, QMessageBox, 
                              QListWidgetItem, QDialog, QFormLayout, QDialogButtonBox, 
                              QPlainTextEdit, QComboBox, QCheckBox, QFrame, QBoxLayout,
-                             QTabWidget, QTextBrowser, QSystemTrayIcon, QWidgetAction, QSizePolicy, QGridLayout, QSizeGrip, QGraphicsDropShadowEffect, QScrollBar, QInputDialog)
+                             QTabWidget, QTextBrowser, QSystemTrayIcon, QWidgetAction, QSizePolicy, QGridLayout, QSizeGrip, QGraphicsDropShadowEffect, QScrollBar, QInputDialog, QSpinBox)
 from PyQt5.QtCore import Qt, QPoint, QVariantAnimation, QThread, pyqtSignal, QTimer, QEvent, QSize, QSharedMemory, QPointF
 from PyQt5.QtGui import QPainter, QColor, QBrush, QFont, QPen, QFontMetrics, QFontDatabase, QIcon, QPixmap, QPolygonF
 
@@ -1284,10 +1284,18 @@ class AlertListWindow(QWidget):
         total_height = 52 + 28 # 헤더 높이 + 컨테이너 패딩
         
         if not page_items:
-            item = QListWidgetItem(tr("msg_no_issues", "✅ 현재 발생한 미해결 내역이 없습니다."))
+            item = QListWidgetItem()
             item.setFlags(Qt.NoItemFlags)
             item.setSizeHint(QSize(0, 60))
             self.list_widget.addItem(item)
+            
+            # ★ 수정됨: 이모지가 잘리지 않도록 넉넉한 패딩을 가진 QLabel로 교체
+            empty_lbl = QLabel(tr("msg_no_issues", "✅ 현재 발생한 미해결 내역이 없습니다."))
+            empty_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            text_color = "#4B5563" if self.is_light else "#A1A1AA"
+            empty_lbl.setStyleSheet(f"color: {text_color}; font-size: 14px; font-family: 'IBM Plex Sans KR', sans-serif; padding: 10px 5px; background: transparent;")
+            
+            self.list_widget.setItemWidget(item, empty_lbl)
             total_height += 60
         else:
             font = QFont()
@@ -2485,6 +2493,121 @@ class AlertHistoryDialog(QDialog):
             
         self.browser.setHtml(html)
 
+# ==========================================
+# ★ 다크/라이트 모드 지원 커스텀 숫자 입력 창
+# ==========================================
+class CustomInputDialog(QDialog):
+    def __init__(self, title, message, default_val, min_val, max_val, config, parent=None):
+        super().__init__(parent)
+        self.config = config
+        self.is_light = self.config.get("color_mode", "dark") == "light"
+        
+        self.setWindowTitle(title)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.resize(340, 160)
+        
+        # 🎨 모드에 따른 동적 색상 할당
+        bg_color = "#F9FAFB" if self.is_light else "#1C1C20"
+        text_color = "#111827" if self.is_light else "#F4F4F5"
+        input_bg = "#FFFFFF" if self.is_light else "#18181B"
+        border_color = "#D1D5DB" if self.is_light else "#3F3F46"
+        sel_color = "#3B82F6" if self.is_light else "#60A5FA"
+        
+        # 버튼 호버 및 화살표 색상
+        btn_hover = "rgba(0, 0, 0, 0.05)" if self.is_light else "rgba(255, 255, 255, 0.05)"
+        arrow_color = "#6B7280" if self.is_light else "#A1A1AA"
+        
+        # ★ 해결: 1. 위쪽 화살표 이미지 동적 생성
+        up_path = os.path.join(CONFIG_DIR, f"spin_up_{'l' if self.is_light else 'd'}.png").replace("\\", "/")
+        if not os.path.exists(up_path):
+            pix = QPixmap(16, 16)
+            pix.fill(Qt.transparent)
+            p = QPainter(pix)
+            p.setRenderHint(QPainter.Antialiasing)
+            p.setBrush(QColor(arrow_color))
+            p.setPen(Qt.NoPen)
+            p.drawPolygon(QPolygonF([QPointF(2, 11), QPointF(14, 11), QPointF(8, 5)])) # ▲ 모양
+            p.end()
+            pix.save(up_path, "PNG")
+            
+        # ★ 해결: 2. 아래쪽 화살표 이미지 동적 생성
+        down_path = os.path.join(CONFIG_DIR, f"spin_down_{'l' if self.is_light else 'd'}.png").replace("\\", "/")
+        if not os.path.exists(down_path):
+            pix = QPixmap(16, 16)
+            pix.fill(Qt.transparent)
+            p = QPainter(pix)
+            p.setRenderHint(QPainter.Antialiasing)
+            p.setBrush(QColor(arrow_color))
+            p.setPen(Qt.NoPen)
+            p.drawPolygon(QPolygonF([QPointF(2, 5), QPointF(14, 5), QPointF(8, 11)])) # ▼ 모양
+            p.end()
+            pix.save(down_path, "PNG")
+            
+        # ★ 해결: 3. QSpinBox CSS 화살표 이미지 주입 및 글자 겹침 방지 여백(padding-right: 30px) 설정
+        self.setStyleSheet(f"""
+            QDialog {{ background-color: {bg_color}; font-family: 'IBM Plex Sans KR', sans-serif; color: {text_color}; }}
+            QLabel {{ color: {text_color}; font-size: 13px; }}
+            QSpinBox {{ 
+                background-color: {input_bg}; color: {text_color}; 
+                border: 1px solid {border_color}; border-radius: 6px; 
+                padding: 6px 30px 6px 12px; font-size: 14px;
+            }}
+            QSpinBox:focus {{ border: 1px solid {sel_color}; }}
+            QSpinBox::up-button {{
+                subcontrol-origin: border; subcontrol-position: top right;
+                width: 24px; border-left: 1px solid {border_color}; border-bottom: 1px solid {border_color};
+                border-top-right-radius: 6px; background: transparent;
+            }}
+            QSpinBox::down-button {{
+                subcontrol-origin: border; subcontrol-position: bottom right;
+                width: 24px; border-left: 1px solid {border_color};
+                border-bottom-right-radius: 6px; background: transparent;
+            }}
+            QSpinBox::up-button:hover, QSpinBox::down-button:hover {{ background-color: {btn_hover}; }}
+            QSpinBox::up-arrow {{ image: url('{up_path}'); width: 10px; height: 10px; }}
+            QSpinBox::down-arrow {{ image: url('{down_path}'); width: 10px; height: 10px; }}
+            QSpinBox::up-arrow:off, QSpinBox::down-arrow:off {{ opacity: 0.3; }}
+        """)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+        
+        lbl = QLabel(message)
+        lbl.setWordWrap(True)
+        layout.addWidget(lbl)
+        
+        self.spin_box = QSpinBox()
+        self.spin_box.setRange(min_val, max_val)
+        self.spin_box.setValue(default_val)
+        layout.addWidget(self.spin_box)
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.setContentsMargins(0, 10, 0, 0)
+        btn_layout.addStretch()
+        
+        # 모던 확인/취소 버튼
+        self.btn_ok = QPushButton(tr("btn_ok", "확인"))
+        self.btn_ok.setCursor(Qt.PointingHandCursor)
+        ok_bg = "#3B82F6" if self.is_light else "#2563EB"
+        ok_hover = "#2563EB" if self.is_light else "#1D4ED8"
+        self.btn_ok.setStyleSheet(f"QPushButton {{ padding: 8px 24px; background-color: {ok_bg}; color: white; border: none; border-radius: 6px; font-weight: bold; font-family: 'IBM Plex Sans KR', sans-serif; }} QPushButton:hover {{ background-color: {ok_hover}; }}")
+        self.btn_ok.clicked.connect(self.accept)
+        
+        self.btn_cancel = QPushButton(tr("btn_cancel", "취소"))
+        self.btn_cancel.setCursor(Qt.PointingHandCursor)
+        can_bg = "#EF4444" if self.is_light else "#DC2626"
+        can_hover = "#DC2626" if self.is_light else "#B91C1C"
+        self.btn_cancel.setStyleSheet(f"QPushButton {{ padding: 8px 24px; background-color: {can_bg}; color: white; border: none; border-radius: 6px; font-weight: bold; font-family: 'IBM Plex Sans KR', sans-serif; }} QPushButton:hover {{ background-color: {can_hover}; }}")
+        self.btn_cancel.clicked.connect(self.reject)
+        
+        btn_layout.addWidget(self.btn_ok)
+        btn_layout.addWidget(self.btn_cancel)
+        layout.addLayout(btn_layout)
+        
+    def get_value(self):
+        return self.spin_box.value()
+
 class ZabbixDesktopWidget(QWidget):
     def __init__(self):
         super().__init__()
@@ -2887,20 +3010,23 @@ class ZabbixDesktopWidget(QWidget):
     def prompt_custom_noti(self):
         title = tr("title_custom_noti", "알림 유지 시간")
         msg = tr("msg_custom_noti", "알림 유지 시간을 초 단위로 입력하세요.\n(0: 끄기, -1: 수동 종료)")
-        val, ok = QInputDialog.getInt(self, title, msg, self.config.get("noti_duration", 7), -1, 86400)
-        if ok: self.set_noti_duration(val)
+        dlg = CustomInputDialog(title, msg, self.config.get("noti_duration", 7), -1, 86400, self.config, self)
+        if dlg.exec_() == QDialog.Accepted:
+            self.set_noti_duration(dlg.get_value())
 
     def prompt_custom_ref(self):
         title = tr("title_custom_ref", "새로고침 주기")
         msg = tr("msg_custom_ref", "새로고침 주기를 초 단위로 입력하세요.\n(최소 1초 이상)")
-        val, ok = QInputDialog.getInt(self, title, msg, self.config.get("refresh_interval", 5), 1, 86400)
-        if ok: self.set_refresh_interval(val)
+        dlg = CustomInputDialog(title, msg, self.config.get("refresh_interval", 5), 1, 86400, self.config, self)
+        if dlg.exec_() == QDialog.Accepted:
+            self.set_refresh_interval(dlg.get_value())
 
     def prompt_custom_page(self):
         title = tr("title_custom_page", "페이지당 표시 개수")
         msg = tr("msg_custom_page", "리스트에 한 번에 표시할 알림 개수를 입력하세요.\n(최소 1개 이상)")
-        val, ok = QInputDialog.getInt(self, title, msg, self.config.get("items_per_page", 5), 1, 1000)
-        if ok: self.set_items_per_page(val)
+        dlg = CustomInputDialog(title, msg, self.config.get("items_per_page", 5), 1, 1000, self.config, self)
+        if dlg.exec_() == QDialog.Accepted:
+            self.set_items_per_page(dlg.get_value())
 
     # 언어 변경 실행 함수
     def set_language(self, lang_code):
