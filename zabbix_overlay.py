@@ -7,18 +7,15 @@ import urllib3
 import hashlib
 import ctypes
 import logging 
-import traceback 
-import math
-import random
 from logging.handlers import RotatingFileHandler 
 from datetime import datetime
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QMenu, QAction, 
                              QListWidget, QLabel, QPushButton, QHBoxLayout, QMessageBox, 
-                             QListWidgetItem, QDialog, QFormLayout, QDialogButtonBox, 
-                             QPlainTextEdit, QComboBox, QCheckBox, QFrame, QBoxLayout,
-                             QTabWidget, QTextBrowser, QSystemTrayIcon, QWidgetAction, QSizePolicy, QGridLayout, QSizeGrip, QGraphicsDropShadowEffect, QScrollBar, QInputDialog, QSpinBox)
-from PyQt5.QtCore import Qt, QPoint, QVariantAnimation, QThread, pyqtSignal, QTimer, QEvent, QSize, QSharedMemory, QPointF
+                             QListWidgetItem, QDialog, QFormLayout, 
+                             QPlainTextEdit, QComboBox, QCheckBox, QFrame,
+                             QTabWidget, QTextBrowser, QSystemTrayIcon, QWidgetAction, QSizePolicy, QGridLayout, QGraphicsDropShadowEffect, QScrollBar, QSpinBox)
 from PyQt5.QtGui import QPainter, QColor, QBrush, QFont, QPen, QFontMetrics, QFontDatabase, QIcon, QPixmap, QPolygonF
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QVariantAnimation, QTimer, QPoint, QPointF, QEvent, QSize, QSharedMemory
 
 # HTTPS 사설 인증서 경고 숨기기
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -205,7 +202,10 @@ class Translator:
             "title_custom_ref": "새로고침 주기",
             "msg_custom_ref": "새로고침 주기를 초 단위로 입력하세요.\n(최소 1초 이상)",
             "title_custom_page": "페이지당 표시 개수",
-            "msg_custom_page": "리스트에 한 번에 표시할 알림 개수를 입력하세요.\n(최소 1개 이상)"
+            "msg_custom_page": "리스트에 한 번에 표시할 알림 개수를 입력하세요.\n(최소 1개 이상)",
+            "menu_use_win_noti": "Windows 기본 알림 사용",
+            "menu_noti_settings": "🔔 알림 동작 설정",
+            "menu_use_custom_noti": "자체 UI 알림 사용"
         }
         # 영어 기본 (en.json)
         en_data = {
@@ -330,7 +330,10 @@ class Translator:
             "title_custom_ref": "Refresh Interval",
             "msg_custom_ref": "Enter refresh interval in seconds.\n(Min: 1s)",
             "title_custom_page": "Items per Page",
-            "msg_custom_page": "Enter number of alerts to display per page.\n(Min: 1)"
+            "msg_custom_page": "Enter number of alerts to display per page.\n(Min: 1)",
+            "menu_use_win_noti": "Use Windows Native Notification",
+            "menu_noti_settings": "🔔 Notification Behaviors",
+            "menu_use_custom_noti": "Use Custom UI Notification"
         }
         with open(os.path.join(LANG_DIR, "ko.json"), 'w', encoding='utf-8') as f:
             json.dump(ko_data, f, indent=4, ensure_ascii=False)
@@ -362,6 +365,27 @@ handler = RotatingFileHandler(LOG_FILE, maxBytes=5*1024*1024, backupCount=2, enc
 formatter = logging.Formatter('[%(asctime)s] [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
+
+# Zabbix 사용자 장부 데이터를 기반으로 다국어/한국어 이름을 올바르게 포맷팅하는 함수
+def format_zabbix_user_name(u):
+    name_str = u.get('name', '').strip()
+    surname_str = u.get('surname', '').strip()
+    
+    # 이름이나 성에 한글이 포함되어 있다면 "성+이름" 순서로 붙여서 출력 (예: 김동균)
+    if any('가' <= c <= '힣' for c in name_str + surname_str):
+        if len(name_str) == 1 and len(surname_str) == 2:
+            full_name = f"{name_str}{surname_str}"
+        elif len(surname_str) == 1 and len(name_str) == 2:
+            full_name = f"{surname_str}{name_str}"
+        else:
+            full_name = f"{surname_str}{name_str}".strip()
+    else: # 영어나 기타 언어면 기존처럼 "이름 성" 유지 (예: John Smith)
+        full_name = f"{name_str} {surname_str}".strip()
+        
+    if not full_name: 
+        full_name = u.get("username", u.get("alias", "Unknown"))
+        
+    return full_name
 
 def apply_debug_level(is_debug):
     logger.setLevel(logging.DEBUG if is_debug else logging.WARNING)
@@ -617,25 +641,7 @@ class ZabbixWorker(QThread):
                     res3 = self._do_post(url, user_payload)
                     users_data = res3.json().get("result", [])
                     for u in users_data:
-                        name_str = u.get('name', '').strip()
-                        surname_str = u.get('surname', '').strip()
-                        
-                        # ★ 이름이나 성에 한글이 포함되어 있다면 "성+이름" 순서로 붙여서 출력 (김동균)
-                        if any('가' <= c <= '힣' for c in name_str + surname_str):
-                            if len(name_str) == 1 and len(surname_str) == 2:
-                                # 예: 이름="이", 성="성현" 으로 거꾸로 적은 경우 ➔ "이성현"
-                                full_name = f"{name_str}{surname_str}"
-                            elif len(surname_str) == 1 and len(name_str) == 2:
-                                # 예: 이름="성현", 성="이" 로 올바르게 적은 경우 ➔ "이성현"
-                                full_name = f"{surname_str}{name_str}"
-                            else:
-                                # 한쪽 칸에 통째로 적었거나(이성현 / 공백) 외자 이름 등은 순서대로 병합
-                                full_name = f"{surname_str}{name_str}".strip()
-                        else: # 영어나 기타 언어면 기존처럼 "이름 성" 유지 (John Smith)
-                            full_name = f"{name_str} {surname_str}".strip()
-                            
-                        if not full_name: full_name = u.get("username", u.get("alias", "Unknown"))
-                        user_map[u["userid"]] = full_name
+                        user_map[u["userid"]] = format_zabbix_user_name(u)
                 except Exception:
                     pass 
 
@@ -681,74 +687,6 @@ class ZabbixWorker(QThread):
             self.error_occurred.emit(tr('msg_timeout', '서버 응답 시간 초과'))
         except Exception as e:
             self.error_occurred.emit(tr('msg_unknown_error', '알 수 없는 오류 발생'))
-
-# ==========================================
-# 알림창 애니메이션 배경 프레임
-# ==========================================
-class BubbleBgFrame(QFrame):
-    def __init__(self, border_color, parent=None):
-        super().__init__(parent)
-        self.border_color = border_color
-        self.base_color = QColor(border_color) 
-        self.bubbles = []
-        
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.update_bubbles)
-        self.timer.start(30)
-        
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if not self.bubbles:
-            for _ in range(40):
-                self.bubbles.append(self.create_bubble(init=True))
-                
-    def create_bubble(self, init=False):
-        w = self.width() if self.width() > 0 else 350
-        h = self.height() if self.height() > 0 else 80
-        
-        x = random.randint(8, w) if init else random.randint(8, 20)
-        y = random.randint(4, h - 4)
-        
-        return {
-            'x': x, 'y': y, 'base_y': y,
-            'r': random.uniform(1.0, 3.5),                 
-            'speed': random.uniform(0.5, 2.5),             
-            'opacity': random.uniform(0.3, 0.8),           
-            'fade_rate': random.uniform(0.005, 0.015),     
-            'sway_speed': random.uniform(0.05, 0.15),      
-            'sway_amp': random.uniform(0.5, 2.0),          
-            'time': random.uniform(0, 100)
-        }
-        
-    def update_bubbles(self):
-        for b in self.bubbles:
-            b['time'] += b['sway_speed']
-            b['x'] += b['speed'] 
-            b['y'] = b['base_y'] + math.sin(b['time']) * b['sway_amp'] 
-            b['opacity'] -= b['fade_rate'] 
-            
-            if b['x'] > self.width() + 10 or b['opacity'] <= 0:
-                b.update(self.create_bubble(init=False))
-        self.update()
-        
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(44, 62, 80, 242)) 
-        painter.drawRoundedRect(self.rect(), 6, 6)
-        
-        c = self.base_color
-        for b in self.bubbles:
-            painter.setBrush(QColor(c.red(), c.green(), c.blue(), int(b['opacity'] * 255)))
-            painter.drawEllipse(QPointF(b['x'], b['y']), b['r'], b['r'])
-            
-        bar_rect = self.rect()
-        bar_rect.setWidth(8)
-        painter.setBrush(c)
-        painter.drawRoundedRect(bar_rect, 6, 6)
-        painter.drawRect(4, 0, 4, self.height())
 
 class ModernScrollBar(QScrollBar):
     def __init__(self, is_light, parent=None):
@@ -1815,17 +1753,7 @@ class IssueActionDialog(QDialog):
                         "userids": user_ids
                     })
                     for u in user_res:
-                        name_str = u.get('name', '').strip()
-                        surname_str = u.get('surname', '').strip()
-                        
-                        if any('가' <= c <= '힣' for c in name_str + surname_str):
-                            if len(name_str) == 1 and len(surname_str) == 2: full_name = f"{name_str}{surname_str}"
-                            elif len(surname_str) == 1 and len(name_str) == 2: full_name = f"{surname_str}{name_str}"
-                            else: full_name = f"{surname_str}{name_str}".strip()
-                        else: full_name = f"{name_str} {surname_str}".strip()
-
-                        if not full_name: full_name = u.get("username", u.get("alias", "Unknown"))
-                        user_map[u["userid"]] = full_name
+                        user_map[u["userid"]] = format_zabbix_user_name(u)
                 
                 formatted_acks = []
                 for ack in acks:
@@ -2837,10 +2765,26 @@ class ZabbixDesktopWidget(QWidget):
 
         self.main_menu.addSeparator()
 
-        # ★ 추가됨: 업데이트 알림 On/Off 스위치
-        self.act_noti_update = QAction(tr("menu_noti_update", "업데이트 알림 표시 (메시지/심각도 변경)"), self.main_menu, checkable=True)
+        # ★ 알림 동작 설정 서브메뉴 생성
+        noti_settings_menu = self.main_menu.addMenu(tr("menu_noti_settings", "🔔 알림 동작 설정"))
+
+        # 1. 업데이트 알림 On/Off 스위치 (독립적)
+        self.act_noti_update = QAction(tr("menu_noti_update", "업데이트 알림 표시 (메시지/심각도 변경)"), noti_settings_menu, checkable=True)
         self.act_noti_update.triggered.connect(self.toggle_noti_update)
-        self.main_menu.addAction(self.act_noti_update)
+        noti_settings_menu.addAction(self.act_noti_update)
+        
+        noti_settings_menu.addSeparator()
+
+        # 2. 알림 스타일 선택 (2개 중 1개만 선택되도록 구성)
+        self.act_custom_noti_style = QAction(tr("menu_use_custom_noti", "자체 UI 알림 사용"), noti_settings_menu, checkable=True)
+        self.act_win_noti = QAction(tr("menu_use_win_noti", "Windows 기본 알림 사용"), noti_settings_menu, checkable=True)
+
+        self.act_custom_noti_style.triggered.connect(lambda: self.set_noti_style(False))
+        self.act_win_noti.triggered.connect(lambda: self.set_noti_style(True))
+
+        noti_settings_menu.addAction(self.act_custom_noti_style)
+        noti_settings_menu.addAction(self.act_win_noti)
+        
         self.main_menu.addSeparator()
 
         noti_menu = self.main_menu.addMenu(tr("menu_noti_duration", "알림 유지 시간"))
@@ -2896,8 +2840,6 @@ class ZabbixDesktopWidget(QWidget):
         self.act_custom_page = QAction(custom_str, page_menu, checkable=True)
         self.act_custom_page.triggered.connect(self.prompt_custom_page)
         page_menu.addAction(self.act_custom_page)
-            
-        self.main_menu.addSeparator()
             
         self.main_menu.addSeparator()
         
@@ -2990,6 +2932,11 @@ class ZabbixDesktopWidget(QWidget):
         for val, act in self.dict_page.items(): act.setChecked(val == self.config.get("items_per_page", 5))
         self.act_debug.setChecked(self.config.get("debug_mode", False)) 
         self.act_noti_update.setChecked(self.config.get("noti_on_update", True))
+        
+        # ★ 알림 스타일 2중 1개 체크 동기화 로직
+        use_win = self.config.get("use_windows_noti", False)
+        self.act_custom_noti_style.setChecked(not use_win)
+        self.act_win_noti.setChecked(use_win)
 
         # ★ 직접 입력된 값이면 '직접 입력...'에 체크 및 설정된 값을 괄호로 보여줌 (다국어 연동)
         curr_noti = self.config.get("noti_duration", 7)
@@ -3217,7 +3164,7 @@ class ZabbixDesktopWidget(QWidget):
             # ★ 추가됨: 시스템 복구 알림 기록
             self.add_history_log("✅ 시스템", "Zabbix 서버 연결이 복구되었습니다.")
             if self.config.get("noti_duration", 7) != 0:
-                self.toast_manager.show("✅ Zabbix 서버 연결이 복구되었습니다.", "resolved", self.config.get("noti_duration", 7))
+                self.show_notification("시스템 복구", "✅ Zabbix 서버 연결이 복구되었습니다.", "✅ Zabbix 서버 연결이 복구되었습니다.", "resolved", self.config.get("noti_duration", 7))
             for circle in self.circles: circle.clear_error_state()
 
         # ★ 1. 알림 누락 방지 및 '복구/업데이트 알림'을 찾기 위해 기존 데이터 저장
@@ -3277,13 +3224,15 @@ class ZabbixDesktopWidget(QWidget):
                     safe_content = content.replace('<', '&lt;').replace('>', '&gt;').replace('\n', '<br>')
                     history_msg = f"{safe_title}<br>💡 {safe_content}"
                     toast_msg = f"<span style='font-family: \"IBM Plex Sans KR\", sans-serif; font-size: 13px; font-weight: bold;'>[{s_name}] {safe_title}</span><br><span style='font-family: \"IBM Plex Sans KR\", sans-serif; color: #BDC3C7; font-size: 11px; font-weight: normal;'>💡 {safe_content}</span>"
+                    plain_msg = f"💡 {content}" # ★ 추가됨
                 else:
                     history_msg = safe_title
                     toast_msg = f"<span style='font-family: \"IBM Plex Sans KR\", sans-serif; font-size: 13px; font-weight: bold;'>[{s_name}] {safe_title}</span>"
+                    plain_msg = "발생된 장애 메시지가 없습니다." # ★ 추가됨
 
+                # 수정 후 (깔끔!)
                 self.add_history_log(s_name, history_msg) 
-                if self.config.get("noti_duration", 7) != 0:
-                    self.toast_manager.show(toast_msg, 'created', self.config.get("noti_duration", 7))
+                self.show_notification(f"[{s_name}] {p['name']}", plain_msg, toast_msg, 'created', self.config.get("noti_duration", 7))
                     
             # ★ [🔄 장애 업데이트 팝업 처리]
             if self.config.get("noti_on_update", True):
@@ -3300,18 +3249,18 @@ class ZabbixDesktopWidget(QWidget):
                     
                     toast_msg = f"<span style='font-family: \"IBM Plex Sans KR\", sans-serif; font-size: 13px; font-weight: bold;'>[{tr('lbl_updated', '업데이트')}: {s_name}] {safe_title}</span><br><span style='font-family: \"IBM Plex Sans KR\", sans-serif; color: #F39C12; font-size: 11px; font-weight: bold;'>💡 {detail_str}</span>"
                     
+                    # 수정 후 (깔끔!)
                     self.add_history_log(s_name, f"({tr('lbl_updated', '업데이트')}: {detail_str}) {safe_title}") 
-                    if self.config.get("noti_duration", 7) != 0:
-                        self.toast_manager.show(toast_msg, 'updated', self.config.get("noti_duration", 7))
+                    self.show_notification(f"[{tr('lbl_updated', '업데이트')}: {s_name}] {p['name']}", f"💡 {detail_str}", toast_msg, 'updated', self.config.get("noti_duration", 7))
 
             # ★ [✅ 장애 복구 팝업 처리]
             for s_name, p in resolved_problems:
                 safe_title = p['name'].replace('<', '&lt;').replace('>', '&gt;')
                 toast_msg = f"<span style='font-family: \"IBM Plex Sans KR\", sans-serif; font-size: 13px; font-weight: bold;'>[{tr('lbl_resolved', '복구')}] {safe_title}</span>"
                 
+                # 수정 후 (깔끔!)
                 self.add_history_log("✅ 시스템", f"[{s_name}] 복구됨: {safe_title}") 
-                if self.config.get("noti_duration", 7) != 0:
-                    self.toast_manager.show(toast_msg, 'resolved', self.config.get("noti_duration", 7))
+                self.show_notification(f"[{tr('lbl_resolved', '복구')}] {p['name']}", "장애가 정상적으로 복구되었습니다.", toast_msg, 'resolved', self.config.get("noti_duration", 7))
                 
         self._first_load_done = True
 
@@ -3340,8 +3289,10 @@ class ZabbixDesktopWidget(QWidget):
             self.in_error_state = True
             logger.error(tr_log(f"[API 상태] Zabbix 서버 연결 끊김: {error_msg}", f"[API Status] Zabbix server connection lost: {error_msg}"))
             self.add_history_log("🚨 시스템", f"서버 연결 끊김 ({error_msg})")
-            if self.config.get("noti_duration", 7) != 0:
-                self.toast_manager.show(f"🚨 연결 오류: {error_msg}", "error", self.config.get("noti_duration", 7))
+            
+            # ★ 수정됨: 분기 래퍼 함수만 남기고 지저분한 중복 조건문 싹 청소
+            self.show_notification("🚨 서버 연결 오류", error_msg, f"🚨 연결 오류: {error_msg}", 'error', self.config.get("noti_duration", 7))
+            
             for i, char in enumerate(["E", "R", "R", "O", "R", "!"]):
                 self.circles[i].set_error_state(char)
                 
@@ -3372,6 +3323,29 @@ class ZabbixDesktopWidget(QWidget):
         enable = self.act_noti_update.isChecked()
         logger.debug(tr_log(f"[UI 액션] 업데이트 알림 토글 변경: {enable}", f"[UI Action] Update notification toggle changed: {enable}"))
         self.config["noti_on_update"] = enable
+        self.save_current_settings()
+
+    # ★ 추가됨: Windows / 자체 알림을 분기 처리하는 래퍼 함수
+    def show_notification(self, plain_title, plain_msg, html_msg, noti_type, duration):
+        if duration == 0: return
+        
+        # 설정에 따라 Windows 기본 알림 사용 시
+        if self.config.get("use_windows_noti", False) and getattr(self, 'tray', None):
+            icon_map = {
+                'created': QSystemTrayIcon.Warning,
+                'updated': QSystemTrayIcon.Information,
+                'resolved': QSystemTrayIcon.Information,
+                'error': QSystemTrayIcon.Critical
+            }
+            self.tray.showMessage(plain_title, plain_msg, icon_map.get(noti_type, QSystemTrayIcon.Information), duration * 1000)
+        # 설정이 꺼져있으면 자체 커스텀 알림(Toast) 사용
+        else:
+            self.toast_manager.show(html_msg, noti_type, duration)
+
+    # ★ 2중 1개 선택 시 설정을 저장하는 함수
+    def set_noti_style(self, use_windows):
+        logger.debug(tr_log(f"[UI 액션] 알림 스타일 변경 (Windows 사용: {use_windows})", f"[UI Action] Noti style changed (Use Windows: {use_windows})"))
+        self.config["use_windows_noti"] = use_windows
         self.save_current_settings()
 
     def toggle_resize_mode(self):
