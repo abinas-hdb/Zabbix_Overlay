@@ -2630,6 +2630,10 @@ class ZabbixDesktopWidget(QWidget):
         sel_bg = "#3498DB" if is_light else "#2563EB"
         sep_color = "#E5E7EB" if is_light else "#3F3F46"
         
+        # ★ 비활성화(Gray out) 전용 폰트 색상 및 호버 배경색 설정
+        disabled_color = "#9CA3AF" if is_light else "#52525B"
+        disabled_hover_bg = "rgba(0, 0, 0, 0.06)" if is_light else "rgba(255, 255, 255, 0.06)"
+        
         menu_style = f"""
             QMenu {{ 
                 background-color: {bg_color}; 
@@ -2640,11 +2644,26 @@ class ZabbixDesktopWidget(QWidget):
                 padding: 7px 28px 7px 28px; 
                 color: {text_color};
             }} 
-            QMenu::item:selected {{ 
+            
+            /* ★ 변경: '활성화 상태(!disabled)'이면서 '호버 상태(selected)'일 때만 파란색 하이라이트 적용 */
+            QMenu::item:selected:!disabled {{ 
                 background-color: {sel_bg}; 
                 color: white; 
                 border-radius: 4px;
             }} 
+            
+            /* ★ 추가: 비활성화 항목 평상시 상태 (글자색 흐리게) */
+            QMenu::item:disabled {{
+                color: {disabled_color};
+                background-color: transparent;
+            }}
+            
+            /* ★ 추가: 비활성화 항목에 마우스를 올렸을 때 (파란색 원천 차단, 연한 음영만 살짝) */
+            QMenu::item:selected:disabled {{
+                background-color: {disabled_hover_bg};
+                color: {disabled_color};
+            }}
+            
             QMenu::separator {{ 
                 height: 1px; 
                 background: {sep_color}; 
