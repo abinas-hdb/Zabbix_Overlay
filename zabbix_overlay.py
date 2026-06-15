@@ -2787,30 +2787,32 @@ class ZabbixDesktopWidget(QWidget):
         
         self.main_menu.addSeparator()
 
-        noti_menu = self.main_menu.addMenu(tr("menu_noti_duration", "알림 유지 시간"))
+        # ★ 수정됨: 지역 변수를 self.noti_menu 로 변경
+        self.noti_menu = self.main_menu.addMenu(tr("menu_noti_duration", "알림 유지 시간"))
         self.dict_noti = {}
         noti_options = {0: tr("noti_off", "알림 끄기"), 3: tr("noti_3s", "3초"), 5: tr("noti_5s", "5초"), 7: tr("noti_7s", "7초 (권장)"), 10: tr("noti_10s", "10초"), 15: tr("noti_15s", "15초"), 30: tr("noti_30s", "30초"), -1: tr("noti_manual", "수동 종료 시까지")}
         for secs, label in noti_options.items():
-            act = QAction(label, noti_menu, checkable=True)
+            act = QAction(label, self.noti_menu, checkable=True)
             act.triggered.connect(lambda checked, s=secs: self.set_noti_duration(s))
-            noti_menu.addAction(act)
+            self.noti_menu.addAction(act)
             self.dict_noti[secs] = act
 
         custom_str = tr("menu_custom", "직접 입력...")
 
         # ★ 추가됨: 알림 유지 시간 직접 입력
-        noti_menu.addSeparator()
-        self.act_custom_noti = QAction(custom_str, noti_menu, checkable=True)
+        self.noti_menu.addSeparator()
+        self.act_custom_noti = QAction(custom_str, self.noti_menu, checkable=True)
         self.act_custom_noti.triggered.connect(self.prompt_custom_noti)
-        noti_menu.addAction(self.act_custom_noti)
+        self.noti_menu.addAction(self.act_custom_noti)
 
-        pos_menu = self.main_menu.addMenu(tr("menu_noti_pos", "알림 위치"))
+        # ★ 수정됨: 지역 변수를 self.pos_menu 로 변경
+        self.pos_menu = self.main_menu.addMenu(tr("menu_noti_pos", "알림 위치"))
 
         self.dict_pos = {}
         for key, label_key, def_label in [("bottom_right", "pos_br", "우측 하단"), ("bottom_left", "pos_bl", "좌측 하단"), ("top_right", "pos_tr", "우측 상단"), ("top_left", "pos_tl", "좌측 상단")]:
-            act = QAction(tr(label_key, def_label), pos_menu, checkable=True)
+            act = QAction(tr(label_key, def_label), self.pos_menu, checkable=True)
             act.triggered.connect(lambda checked, k=key: self.set_noti_position(k))
-            pos_menu.addAction(act)
+            self.pos_menu.addAction(act)
             self.dict_pos[key] = act
 
         refresh_menu = self.main_menu.addMenu(tr("menu_refresh_int", "새로고침 주기"))
@@ -2937,6 +2939,14 @@ class ZabbixDesktopWidget(QWidget):
         use_win = self.config.get("use_windows_noti", False)
         self.act_custom_noti_style.setChecked(not use_win)
         self.act_win_noti.setChecked(use_win)
+        
+        # ==========================================
+        # ★ 추가됨: Windows 알림 사용 시 시간/위치 메뉴 비활성화
+        # ==========================================
+        self.noti_menu.setEnabled(not use_win)
+        self.pos_menu.setEnabled(not use_win)
+
+        # ★ 직접 입력된 값이면 '직접 입력...'에 체크 및 설정된 값을 괄호로 보여줌 (다국어 연동)
 
         # ★ 직접 입력된 값이면 '직접 입력...'에 체크 및 설정된 값을 괄호로 보여줌 (다국어 연동)
         curr_noti = self.config.get("noti_duration", 7)
