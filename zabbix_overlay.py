@@ -2633,11 +2633,23 @@ class ZabbixDesktopWidget(QWidget):
                     circle.list_window.close()
         
     def apply_layout_direction(self):
-        for circle in self.circles:
-            self.main_layout.removeWidget(circle)
+        # 1. 그리드 레이아웃이 가지고 있는 '유령 칸'을 초기화하기 위해 기존 레이아웃 완벽 파괴
+        if self.layout() is not None:
+            old_layout = self.layout()
+            for circle in self.circles:
+                old_layout.removeWidget(circle)
+                circle.setParent(self) # 위젯이 날아가지 않도록 메인 창에 단단히 묶어둠
+            QWidget().setLayout(old_layout) # 더미 위젯에 씌워서 메모리에서 완전히 날려버림(Garbage Collect)
             
-        direction = self.config.get("layout_direction", "vertical")
+        # 2. 깨끗한 새 레이아웃 생성
+        self.main_layout = QGridLayout()
         theme = self.config.get("theme", "circle")
+        self.main_layout.setSpacing(0 if "rectangle" in theme else 6)
+        self.main_layout.setContentsMargins(15, 15, 15, 15)
+        self.setLayout(self.main_layout)
+        
+        # 3. 새로운 테마와 방향에 맞게 알림원 재배치
+        direction = self.config.get("layout_direction", "vertical")
         
         for i, circle in enumerate(self.circles):
             if "2x3" in theme:  
@@ -2650,6 +2662,8 @@ class ZabbixDesktopWidget(QWidget):
             else:
                 self.main_layout.addWidget(circle, i, 0)
                 
+        # 4. OS에게 "이전의 넓었던 창 크기를 잊고 내부 알림원에 딱 맞게 강제로 줄여!"라고 명령
+        self.resize(1, 1)
         self.adjustSize()
 
     def init_global_menu(self):
@@ -3001,9 +3015,12 @@ class ZabbixDesktopWidget(QWidget):
         logger.debug(tr_log(f"[UI 액션] 테마(모양) 변경: {theme}", f"[UI Action] Theme changed: {theme}"))
         self.config["theme"] = theme
         self.save_current_settings()
-        self.main_layout.setSpacing(0 if "rectangle" in theme else 15)
+        
+        # apply_layout_direction 안에서 레이아웃 파괴/재생성 및 간격 조절을 모두 수행함
         self.apply_layout_direction()
-        for circle in self.circles: circle.update()
+        
+        for circle in self.circles: 
+            circle.update()
 
     def set_layout_direction(self, direction):
         logger.debug(tr_log(f"[UI 액션] 배치 방향 변경: {direction}", f"[UI Action] Layout direction changed: {direction}"))
@@ -3242,9 +3259,10 @@ class ZabbixDesktopWidget(QWidget):
             self.resizeEvent(None) # 버튼들을 중앙으로 정렬
         else:
             self.resize_ui_container.hide()
+            self.unsetCursor() # ★ 추가됨: 크기 조절 모드가 끝날 때 갇혀있는 마우스 커서 강제 초기화!
             
         self.act_resize.setChecked(self.is_resize_mode)
-        self.update() 
+        self.update()
         
     def apply_resize(self):
         logger.debug(tr_log("[UI 액션] 크기 조절 적용", "[UI Action] Resize applied"))
@@ -3325,7 +3343,10 @@ class ZabbixDesktopWidget(QWidget):
 
     def mouseMoveEvent(self, event):
         if self.is_resize_mode: 
-            self._update_resize_cursor(event.pos())
+            # ★ 추가됨: 마우스 드래그 중이 아닐 때만 위치에 따라 커서 변경 (드래그 중에 커서 연산이 꼬이는 것 방지)
+            if not getattr(self, '_resize_corner', None) and not getattr(self, '_is_moving', False):
+                self._update_resize_cursor(event.pos())
+                
             # 창 이동 처리
             if self._is_moving and (event.buttons() & Qt.LeftButton):
                 self.move(event.globalPos() - self._move_start_pos)
@@ -3364,6 +3385,12 @@ class ZabbixDesktopWidget(QWidget):
                 event.accept()
                 return
         super().mouseReleaseEvent(event)
+
+    def leaveEvent(self, event):
+        # ★ 추가됨: 마우스가 창 밖으로 휙 나갈 때 커서가 안 돌아오는 증상 완벽 해결
+        if not getattr(self, '_resize_corner', None) and not getattr(self, '_is_moving', False):
+            self.unsetCursor()
+        super().leaveEvent(event)
 
     def _get_resize_corner(self, pos):
         m, x, y = 20, pos.x(), pos.y()
