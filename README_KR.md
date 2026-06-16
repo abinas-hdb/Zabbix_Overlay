@@ -90,4 +90,4 @@ pyinstaller --noconsole --onefile --add-data "IBMPlexSansKR-Regular.ttf;." --add
 본 프로그램의 소스 코드는 100% 공개되어 있으며 어떠한 악의적인 코드도 포함되어 있지 않으니 안심하셔도 됩니다. 프로그램을 차단 없이 원활하게 실행하시려면, 사용 중인 백신 프로그램(Windows Defender, V3, 알약 등)의 **검사 예외(제외) 항목**에 `zabbix_overlay.exe` 파일 또는 해당 파일이 있는 폴더 전체를 추가해 주시기 바랍니다.
 
 ## 라이선스
-이 프로젝트의 라이선스는 아직 지정되지 않았습니다.
+이 프로젝트는 MIT 라이선스(MIT License)에 따라 배포됩니다. 자세한 내용은 [LICENSE](LICENSE) 파일을 참조하세요.
