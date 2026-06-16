@@ -400,6 +400,54 @@ def save_config(config):
     with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
         json.dump(config, f, indent=4)
 
+# ==========================================
+# ★ 추가됨: 첫 실행 시 언어 선택 다이얼로그
+# ==========================================
+class InitialLangDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.selected_lang = "en" # 기본값
+        self.setWindowTitle("Select Language / 언어 선택")
+        self.setFixedSize(340, 160)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+
+        # 프로그램 실행 극초기이므로 테마 설정 전 기본 다크 모드 스타일 강제 적용
+        self.setStyleSheet("""
+            QDialog { background-color: #1C1C20; color: #F4F4F5; font-family: 'IBM Plex Sans KR', sans-serif; }
+            QLabel { color: #F4F4F5; font-size: 14px; font-weight: bold; }
+            QPushButton { 
+                padding: 12px; background-color: #2A2A30; color: #F4F4F5; 
+                border: 1px solid #3F3F46; border-radius: 6px; font-size: 14px; font-weight: bold;
+            }
+            QPushButton:hover { background-color: #3B82F6; color: white; border-color: #3B82F6; }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 25, 20, 20)
+        layout.setSpacing(15)
+
+        lbl = QLabel("Please select your language.\n언어를 선택해 주세요.")
+        lbl.setAlignment(Qt.AlignCenter)
+        layout.addWidget(lbl)
+
+        btn_layout = QHBoxLayout()
+        btn_ko = QPushButton("한국어")
+        btn_en = QPushButton("English")
+
+        btn_ko.setCursor(Qt.PointingHandCursor)
+        btn_en.setCursor(Qt.PointingHandCursor)
+
+        btn_ko.clicked.connect(lambda: self.select_lang("ko"))
+        btn_en.clicked.connect(lambda: self.select_lang("en"))
+
+        btn_layout.addWidget(btn_ko)
+        btn_layout.addWidget(btn_en)
+        layout.addLayout(btn_layout)
+
+    def select_lang(self, lang):
+        self.selected_lang = lang
+        self.accept()
+
 def load_config():
     sample_config = {
         "x": 100, "y": 100, "circle_size": 60,
@@ -422,7 +470,16 @@ def load_config():
     }
     
     if not os.path.exists(CONFIG_FILE):
+        # ★ 수정됨: 설정 파일 생성 전 언어부터 묻기
+        lang_dlg = InitialLangDialog()
+        lang_dlg.exec_()
+        
+        sample_config["language"] = lang_dlg.selected_lang
         save_config(sample_config)
+        
+        # 선택한 언어로 번역기 즉시 장전 (안내 메시지를 선택한 언어로 띄우기 위함)
+        _translator.load_language(lang_dlg.selected_lang)
+        
         custom_msgbox(QMessageBox.Information, tr("msg_init_setup", "초기 설정 안내"), tr("msg_config_created", "설정 파일이 새로 생성되었습니다.\n위치: {path}\n\n프로그램을 종료합니다. 메모장 등으로 파일을 열어\n실제 Zabbix 서버 주소와 계정(또는 API 토큰) 정보로 수정한 후 다시 실행해 주세요.").format(path=CONFIG_FILE))
         sys.exit(0)
         
