@@ -406,7 +406,7 @@ def save_config(config):
 class InitialLangDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.selected_lang = "en" # 기본값
+        self.selected_lang = "" # ★ 수정됨: 기본값을 강제로 지정하지 않고 비워둠
         self.setWindowTitle("Select Language / 언어 선택")
         self.setFixedSize(340, 160)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
@@ -465,19 +465,25 @@ def load_config():
         "autostart": False,
         "history_max_count": 100,
         "debug_mode": False,
-        "language": "ko",
+        "language": "",  # ★ 수정됨: 기본값을 빈 문자열로 비워둠
         "noti_on_update": True
     }
     
     if not os.path.exists(CONFIG_FILE):
-        # ★ 수정됨: 설정 파일 생성 전 언어부터 묻기
+        # ★ 설정 파일 생성 전 언어부터 묻기
         lang_dlg = InitialLangDialog()
         lang_dlg.exec_()
+        
+        # ==========================================
+        # ★ 추가됨: X 버튼을 눌러서 언어 선택을 안 하고 닫았다면 프로그램 즉시 종료
+        # ==========================================
+        if not lang_dlg.selected_lang:
+            sys.exit(0)
         
         sample_config["language"] = lang_dlg.selected_lang
         save_config(sample_config)
         
-        # 선택한 언어로 번역기 즉시 장전 (안내 메시지를 선택한 언어로 띄우기 위함)
+        # 선택한 언어로 번역기 즉시 장전 (안내 메시지 번역을 위함)
         _translator.load_language(lang_dlg.selected_lang)
         
         custom_msgbox(QMessageBox.Information, tr("msg_init_setup", "초기 설정 안내"), tr("msg_config_created", "설정 파일이 새로 생성되었습니다.\n위치: {path}\n\n프로그램을 종료합니다. 메모장 등으로 파일을 열어\n실제 Zabbix 서버 주소와 계정(또는 API 토큰) 정보로 수정한 후 다시 실행해 주세요.").format(path=CONFIG_FILE))
@@ -487,6 +493,22 @@ def load_config():
         with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
             user_config = json.load(f)
             
+        # ★ 추가됨: 언어 설정이 비어있으면(무시하고 넘겼거나 구버전) 다시 언어 선택 창 띄우기
+        if not user_config.get("language"):
+            lang_dlg = InitialLangDialog()
+            lang_dlg.exec_()
+            # ==========================================
+            # ★ 추가됨: 여기서도 X를 눌러 취소했으면 억지로 진행하지 않고 강제 종료
+            # ==========================================
+            if not lang_dlg.selected_lang:
+                sys.exit(0)
+                
+            user_config["language"] = lang_dlg.selected_lang
+            save_config(user_config)
+            
+        # ★ 중요: Zabbix URL 경고창 등을 띄우기 전에, 무조건 번역기부터 해당 언어로 장전!
+        _translator.load_language(user_config.get("language", "en"))
+            
         if user_config.get("zabbix_url") == sample_config["zabbix_url"]:
             custom_msgbox(QMessageBox.Warning, tr("msg_need_config_change", "설정 변경 필요"), tr("msg_zabbix_default", "Zabbix 서버 주소가 초기값 그대로입니다.\n\n{path}\n파일을 열어 실제 서버 정보로 수정해 주세요.").format(path=CONFIG_FILE))
             sys.exit(0)
@@ -495,6 +517,8 @@ def load_config():
         
     except Exception as e:
         save_config(sample_config)
+        # 에러 발생 시에는 최후의 수단으로 한국어(기본값)로 에러 상황 렌더링
+        _translator.load_language("ko")
         custom_msgbox(QMessageBox.Warning, tr("msg_config_error", "설정 파일 오류"), tr("msg_config_corrupted", "설정 파일 형식이 손상되어 샘플 파일로 초기화했습니다.\n\n에러 내용: {err}\n\n프로그램을 종료합니다. 설정 파일을 다시 작성해 주세요.").format(err=str(e)))
         sys.exit(0)
 
