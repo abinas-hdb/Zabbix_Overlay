@@ -78,9 +78,6 @@ pyinstaller --noconsole --onefile --add-data "IBMPlexSansKR-Regular.ttf;." --add
 
 Once completed, you will find the `zabbix_overlay.exe` inside the `dist` folder.
 
-## License
-The license for this project has not been specified yet.
-
 ## Known Issues & Troubleshooting
 
 **Antivirus False Positives (Windows)**
@@ -91,3 +88,6 @@ If you compile this project into a standalone `.exe` using PyInstaller, some ant
 
 **Resolution:**
 Rest assured, the source code is completely open, transparent, and safe. To run the executable without issues, simply add the `zabbix_overlay.exe` file or its containing folder to your antivirus software's **Exclusion List (Whitelist)**.
+
+## License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
