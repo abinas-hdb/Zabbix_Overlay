@@ -3759,15 +3759,6 @@ class ZabbixDesktopWidget(QWidget):
 # ★ 프로그램 시작점
 # ==========================================
 if __name__ == '__main__':
-    # ==========================================
-    # ★ 추가됨: Windows 알림 센터에 히스토리가 남도록 App ID 강제 등록
-    # ==========================================
-    try:
-        myappid = 'Zabbix.Overlay.Widget.1.0'
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
-    except:
-        pass
-
     app = QApplication(sys.argv)
     
     app.setQuitOnLastWindowClosed(False)  
