@@ -934,16 +934,15 @@ class ToastManager:
 class RippleDot(QWidget):
     def __init__(self, hex_color, parent=None):
         super().__init__(parent)
-        self.setFixedSize(16, 18) # 우측 텍스트와 높이를 맞추기 위한 여백
+        self.setFixedSize(14, 18) # 우측 텍스트와 높이를 맞추기 위한 여백
         self.base_color = QColor(hex_color)
         self.progress = 0.0
         
-        # 1.5초(1500ms) 주기로 무한 반복되는 애니메이션
         self.anim = QVariantAnimation(self)
         self.anim.setDuration(1500) 
         self.anim.setStartValue(0.0)
         self.anim.setEndValue(1.0)
-        self.anim.setLoopCount(-1) # 무한 반복(-1)
+        self.anim.setLoopCount(-1) 
         self.anim.valueChanged.connect(self._update_progress)
         self.anim.start()
         
@@ -953,13 +952,12 @@ class RippleDot(QWidget):
         
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.Antialiasing) # 둥근 테두리를 부드럽게
         
-        # 그리기 중심점 (텍스트 라인과 맞추기 위해 Y축을 살짝 내림)
         center = QPointF(self.width() / 2.0, self.height() / 2.0 + 1.0)
-        base_radius = 3.0
+        base_radius = 3.5 # ★ 2.5에서 3.5로 살짝 키움 (황금 비율)
         
-        # 1. 배경에서 퍼져나가는 파동 (크기는 커지고 투명도는 낮아짐)
+        # 1. 배경에서 퍼져나가는 파동
         ripple_radius = base_radius + (self.width() / 2.0 - base_radius) * self.progress
         alpha = int(255 * (1.0 - self.progress))
         ripple_color = QColor(self.base_color.red(), self.base_color.green(), self.base_color.blue(), alpha)
@@ -968,8 +966,28 @@ class RippleDot(QWidget):
         painter.setPen(Qt.NoPen)
         painter.drawEllipse(center, ripple_radius, ripple_radius)
         
-        # 2. 중앙에 단단하게 고정된 점
+        # 2. 중앙 점
         painter.setBrush(QBrush(self.base_color))
+        painter.drawEllipse(center, base_radius, base_radius)
+
+# ==========================================
+# ★ 추가됨: 완벽한 정원을 그리는 고정 점 (Static Dot)
+# ==========================================
+class StaticDot(QWidget):
+    def __init__(self, hex_color, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(14, 18) 
+        self.base_color = QColor(hex_color)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing) # 둥근 테두리를 부드럽게
+        
+        center = QPointF(self.width() / 2.0, self.height() / 2.0 + 1.0)
+        base_radius = 3.5 # ★ 파동 원과 동일하게 3.5로 살짝 키움
+        
+        painter.setBrush(QBrush(self.base_color))
+        painter.setPen(Qt.NoPen)
         painter.drawEllipse(center, base_radius, base_radius)
 
 class AlertListWindow(QWidget):
@@ -1058,6 +1076,13 @@ class AlertListWindow(QWidget):
         self.next_btn.setStyleSheet(modern_btn_style)
         self.next_btn.clicked.connect(self.go_next_page)
 
+        # ★ 추가됨: 모두 읽기 버튼
+        self.read_all_btn = QPushButton("✔ 모두 읽기")
+        self.read_all_btn.setFixedSize(80, 28)
+        self.read_all_btn.setCursor(Qt.PointingHandCursor)
+        self.read_all_btn.setStyleSheet(modern_btn_style.replace("font-size: 16px;", "font-size: 12px;"))
+        self.read_all_btn.clicked.connect(self.mark_all_read)
+
         self.refresh_btn = QPushButton("↻")
         self.refresh_btn.setFixedSize(28, 28)
         self.refresh_btn.setCursor(Qt.PointingHandCursor)
@@ -1076,6 +1101,7 @@ class AlertListWindow(QWidget):
         header_layout.addWidget(self.prev_btn)
         header_layout.addWidget(self.page_lbl)
         header_layout.addWidget(self.next_btn)
+        header_layout.addWidget(self.read_all_btn) # ★ 추가됨
         header_layout.addWidget(self.refresh_btn)
         header_layout.addWidget(close_btn)
 
@@ -1116,6 +1142,14 @@ class AlertListWindow(QWidget):
         self.setWindowOpacity(0.0)
         self._is_closing = False
 
+    # ★ 추가됨: 모두 읽기 기능
+    def mark_all_read(self):
+        for p in self.problems_list:
+            self.owner_window.unread_events.discard(str(p['eventid']))
+        self._last_rendered_state = None # 강제 리렌더링
+        self.refresh_page()
+        self.owner_window.update() # 메인 원형 UI도 갱신
+
     def create_issue_item_widget(self, issue_data):
         card_widget = QWidget()
         
@@ -1137,15 +1171,20 @@ class AlertListWindow(QWidget):
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
         
-        # ★ 기존 QLabel을 지우고, 무한 반복 파동 애니메이션이 들어간 RippleDot으로 교체!
-        dot_lbl = RippleDot(self.hex_color)
+        is_unread = str(issue_data['eventid']) in self.owner_window.unread_events
         
+        # ★ 분기문 교체 (QLabel 텍스트 방식 -> QPainter 그래픽 방식)
+        if is_unread:
+            dot_widget = RippleDot(self.hex_color) # 안 읽었으면 파동 원
+        else:
+            dot_widget = StaticDot(self.hex_color) # 읽었으면 완벽한 고정 원
+            
         safe_title = issue_data['name'].replace('<', '&lt;').replace('>', '&gt;')
         title_lbl = QLabel(f"<span style='font-family: \"IBM Plex Sans KR\", sans-serif; color: {title_color}; font-size: 13px; font-weight: bold;'>{safe_title}</span>")
         title_lbl.setStyleSheet("background: transparent; border: none;")
         title_lbl.setWordWrap(True)
         
-        header_layout.addWidget(dot_lbl, 0, Qt.AlignTop)
+        header_layout.addWidget(dot_widget, 0, Qt.AlignTop)
         header_layout.addWidget(title_lbl, 1)
         outer_layout.addLayout(header_layout)
         
@@ -1206,6 +1245,10 @@ class AlertListWindow(QWidget):
         self.prev_btn.setVisible(self.current_page > 0)
         self.next_btn.setVisible(self.current_page < self.total_pages - 1)
         self.page_lbl.setVisible(self.total_pages > 1)
+
+        # ★ 추가됨: 안 읽은 알림이 없으면 '모두 읽기' 버튼 숨김
+        has_unread = any(str(p['eventid']) in self.owner_window.unread_events for p in self.problems_list)
+        self.read_all_btn.setVisible(has_unread)
         
         # ★ 핵심 방어 로직: 현재 페이지의 데이터가 100% 동일하다면 화면을 다시 그리지 않음
         # 이 코드를 통해 5초마다 리스트가 파괴/재생성되며 발생하는 
@@ -1306,6 +1349,13 @@ class AlertListWindow(QWidget):
     def open_issue_editor(self, item):
         issue_data = item.data(Qt.UserRole)
         if not issue_data: return
+
+        # ★ 추가됨: 창 열기 전에 읽음 처리
+        if str(issue_data["eventid"]) in self.owner_window.unread_events:
+            self.owner_window.unread_events.discard(str(issue_data["eventid"]))
+            self._last_rendered_state = None
+            self.refresh_page()
+            self.owner_window.update()
 
         dlg = IssueActionDialog(issue_data, self)
         if dlg.exec_() != QDialog.Accepted: return
@@ -1824,12 +1874,29 @@ class AlertCircle(QWidget):
         self.blink_stop_anim.setDuration(400) # 0.4초 동안 부드럽게 감쇠
         self.blink_stop_anim.valueChanged.connect(self._update_blink_progress)
         self.blink_stop_anim.finished.connect(self._on_blink_stop_finished)
+
+        # ==========================================
+        # ★ 추가됨: 우측 상단 '안 읽음(Unread)' 파동 뱃지 애니메이션
+        # ==========================================
+        self.unread_progress = 0.0
+        self.unread_anim = QVariantAnimation(self)
+        self.unread_anim.setDuration(1500)
+        self.unread_anim.setStartValue(0.0)
+        self.unread_anim.setEndValue(1.0)
+        self.unread_anim.setLoopCount(-1)
+        self.unread_anim.valueChanged.connect(self._update_unread_progress)
+        self.unread_anim.start()
         
         # 새로고침 대기(로딩) 상태 변수 및 타이머
         self.is_waiting_for_data = False
         self.loading_angle = 0
         self.loading_timer = QTimer(self)
         self.loading_timer.timeout.connect(self._update_loading_angle)
+
+    # ★ 누락되었던 파동 애니메이션 업데이트 함수 추가
+    def _update_unread_progress(self, val):
+        self.unread_progress = val
+        self.update()
 
     def _update_loading_angle(self):
         self.loading_angle = (self.loading_angle + 20) % 360
@@ -2092,6 +2159,25 @@ class AlertCircle(QWidget):
         painter.setFont(font)
         painter.setPen(num_color)
         painter.drawText(0, int(self.height() * 0.45), self.width(), int(self.height() * 0.45), Qt.AlignCenter, count_str)
+
+        # ==========================================
+        # ★ 추가됨: 안 읽은 이벤트가 있으면 우측 상단에 파동 치는 미니 원 그리기
+        # ==========================================
+        has_unread = any(str(p['eventid']) in self.window().unread_events for p in self.problems)
+        if has_unread:
+            badge_center = QPointF(self.width() - 14, 14)
+            badge_color = QColor(231, 76, 60) # 빨간색
+            
+            # 파동 그리기
+            ripple_radius = 4.0 + (10.0 * self.unread_progress)
+            alpha = int(255 * (1.0 - self.unread_progress))
+            painter.setBrush(QBrush(QColor(badge_color.red(), badge_color.green(), badge_color.blue(), alpha)))
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(badge_center, ripple_radius, ripple_radius)
+            
+            # 고정된 중앙 점 그리기
+            painter.setBrush(QBrush(badge_color))
+            painter.drawEllipse(badge_center, 4.0, 4.0)
         
     def enterEvent(self, event):
         if self.is_error_state: return 
@@ -2558,6 +2644,7 @@ class ZabbixDesktopWidget(QWidget):
     def __init__(self):
         super().__init__()
         self.config = load_config()
+        self.unread_events = set() # ★ 추가됨: 안 읽은 알림 이벤트 ID 추적
         apply_debug_level(self.config.get("debug_mode", False))
         self.toast_manager = ToastManager(self, self.config)
         self.is_resize_mode = False
@@ -3264,6 +3351,7 @@ class ZabbixDesktopWidget(QWidget):
             
             # [🚨 장애 발생 팝업 처리]
             for s_name, p in new_problems:
+                self.unread_events.add(str(p['eventid'])) # ★ 추가됨: 안 읽음 처리
                 safe_title = p['name'].replace('<', '&lt;').replace('>', '&gt;')
                 content = p.get("opdata", "").strip()
                 
@@ -3284,6 +3372,7 @@ class ZabbixDesktopWidget(QWidget):
             # ★ [🔄 장애 업데이트 팝업 처리]
             if self.config.get("noti_on_update", True):
                 for s_name, p, old_s_name, is_new_msg in updated_problems:
+                    self.unread_events.add(str(p['eventid'])) # ★ 추가됨: 안 읽음 처리
                     safe_title = p['name'].replace('<', '&lt;').replace('>', '&gt;')
                     
                     update_details = []
@@ -3572,6 +3661,15 @@ class ZabbixDesktopWidget(QWidget):
 # ★ 프로그램 시작점
 # ==========================================
 if __name__ == '__main__':
+    # ==========================================
+    # ★ 추가됨: Windows 알림 센터에 히스토리가 남도록 App ID 강제 등록
+    # ==========================================
+    try:
+        myappid = 'Zabbix.Overlay.Widget.1.0'
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+    except:
+        pass
+
     app = QApplication(sys.argv)
     
     app.setQuitOnLastWindowClosed(False)  
