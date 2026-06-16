@@ -1816,6 +1816,14 @@ class AlertCircle(QWidget):
         self.blink_anim.setKeyValueAt(1.0, 0.0)
         self.blink_anim.setLoopCount(-1) # 무한 반복
         self.blink_anim.valueChanged.connect(self._update_blink_progress)
+
+        # ==========================================
+        # ★ 추가됨: 깜빡임이 끝날 때 뚝 끊기지 않게 스르륵 꺼지는 감쇠 애니메이션
+        # ==========================================
+        self.blink_stop_anim = QVariantAnimation(self)
+        self.blink_stop_anim.setDuration(400) # 0.4초 동안 부드럽게 감쇠
+        self.blink_stop_anim.valueChanged.connect(self._update_blink_progress)
+        self.blink_stop_anim.finished.connect(self._on_blink_stop_finished)
         
         # 새로고침 대기(로딩) 상태 변수 및 타이머
         self.is_waiting_for_data = False
@@ -1825,6 +1833,12 @@ class AlertCircle(QWidget):
 
     def _update_loading_angle(self):
         self.loading_angle = (self.loading_angle + 20) % 360
+        self.update()
+
+    # ★ 추가됨: 감쇠 애니메이션이 끝나면 하이라이트 상태를 완전히 해제
+    def _on_blink_stop_finished(self):
+        self.is_highlighted = False
+        self.blink_progress = 0.0
         self.update()
 
     def start_loading(self):
@@ -1870,16 +1884,20 @@ class AlertCircle(QWidget):
     def trigger_highlight(self, highlight_type):
         self.highlight_type = highlight_type
         self.is_highlighted = True
-        self.blink_anim.start() # 부드러운 깜빡임 시작
+        self.blink_stop_anim.stop() # ★ 꺼지는 중이었다면 즉시 멈춤
+        self.blink_anim.start()     # 부드러운 깜빡임 시작
         self.update()
         self.highlight_timer.start(3000)
 
     def clear_highlight(self):
         if self.is_error_state: return
-        self.is_highlighted = False
         self.blink_anim.stop()
-        self.blink_progress = 0.0
-        self.update()
+        
+        # ★ 수정됨: 뚝 끊지 않고 현재 투명도에서 0.0까지 0.4초간 스르륵 빠지도록 설정
+        self.blink_stop_anim.stop()
+        self.blink_stop_anim.setStartValue(self.blink_progress)
+        self.blink_stop_anim.setEndValue(0.0)
+        self.blink_stop_anim.start()
 
     def update_data(self, problems_list):
         if self.is_first_load:
