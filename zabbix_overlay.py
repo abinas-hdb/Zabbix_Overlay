@@ -2029,29 +2029,46 @@ class AlertCircle(QWidget):
                 int(c1.alpha() + (c2.alpha() - c1.alpha()) * factor)
             )
 
+        # ★ 추가됨: 배경이 진해질 때 글자가 잘 보이도록 대비색(흑/백)을 찾아주는 함수
+        def get_contrast_color(c):
+            lum = (0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue()) / 255
+            return QColor(31, 41, 55) if lum > 0.55 else QColor(255, 255, 255)
+
+        current_bg = base_bg # 평상시 기본 배경색
+
         # 색상 세팅 (부드러운 애니메이션 적용)
         if self.is_error_state:
             glow_color = QColor(231, 76, 60)
             base_border = QColor(0, 0, 0, 30) if is_light else QColor(255, 255, 255, 50)
             base_text = QColor(31, 41, 55) if is_light else QColor(255, 255, 255)
             
-            # blink_progress 값에 따라 원래 색상에서 경고 색상으로 서서히 물듦
+            # ★ 수정됨: 배경 자체가 에러 색상으로 강하게 물듦 (80% 농도)
+            glow_bg = QColor(glow_color.red(), glow_color.green(), glow_color.blue(), base_bg.alpha())
+            current_bg = blend(base_bg, glow_bg, self.blink_progress * 0.8)
+            
+            contrast_text = get_contrast_color(glow_color)
             border_color = blend(base_border, glow_color, self.blink_progress)
-            text_color = blend(base_text, glow_color, self.blink_progress)
+            text_color = blend(base_text, contrast_text, self.blink_progress)
             num_color = text_color
+            
         else:
             if self.is_highlighted:
-                if is_light:
-                    glow_color = QColor(31, 41, 55) if self.highlight_type == 'created' else QColor(16, 185, 129)
+                # ★ 수정됨: 무미건조한 하얀색이 아니라, 각 심각도 본연의 색상으로 깜빡임
+                if self.highlight_type == 'created':
+                    glow_color = self.circle_color
                 else:
-                    glow_color = QColor(255, 255, 255) if self.highlight_type == 'created' else QColor(46, 204, 113)
+                    glow_color = QColor(16, 185, 129) if is_light else QColor(46, 204, 113) # 복구(초록색)
                     
                 base_border = self.circle_color
                 base_text = QColor(31, 41, 55) if is_light else QColor(255, 255, 255)
                 
-                # blink_progress 값에 따라 서서히 물드는 효과 적용
+                # ★ 수정됨: 배경 자체가 발생/복구 색상으로 물듦 (75% 농도)
+                glow_bg = QColor(glow_color.red(), glow_color.green(), glow_color.blue(), base_bg.alpha())
+                current_bg = blend(base_bg, glow_bg, self.blink_progress * 0.75)
+                
+                contrast_text = get_contrast_color(glow_color)
                 border_color = blend(base_border, glow_color, self.blink_progress)
-                text_color = blend(base_text, glow_color, self.blink_progress)
+                text_color = blend(base_text, contrast_text, self.blink_progress)
                 num_color = text_color
             else:
                 glow_color = self.circle_color
@@ -2071,7 +2088,7 @@ class AlertCircle(QWidget):
                     num_color = glow_color
 
         # 2. 배경 및 테두리 그리기
-        painter.setBrush(QBrush(base_bg))
+        painter.setBrush(QBrush(current_bg)) # ★ base_bg에서 current_bg로 변경!
         pen_width = 3 if self.is_highlighted or self.is_error_state else 2
         painter.setPen(QPen(border_color, pen_width))
         
