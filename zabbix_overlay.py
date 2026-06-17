@@ -206,7 +206,8 @@ class Translator:
             "menu_use_win_noti": "Windows 기본 알림 사용",
             "menu_noti_settings": "🔔 알림 동작 설정",
             "menu_use_custom_noti": "자체 UI 알림 사용",
-            "menu_save_state": "상태 기억하기 (히스토리/안 읽음)"
+            "menu_save_state": "상태 기억하기 (히스토리/안 읽음)",
+            "lbl_cannot_close": " (수동 클로즈 불가)"
         }
         # 영어 기본 (en.json)
         en_data = {
@@ -335,7 +336,8 @@ class Translator:
             "menu_use_win_noti": "Use Windows Native Notification",
             "menu_noti_settings": "🔔 Notification Behaviors",
             "menu_use_custom_noti": "Use Custom UI Notification",
-            "menu_save_state": "Remember State (History/Unread)"
+            "menu_save_state": "Remember State (History/Unread)",
+            "lbl_cannot_close": " (Cannot close manually)"
         }
         with open(os.path.join(LANG_DIR, "ko.json"), 'w', encoding='utf-8') as f:
             json.dump(ko_data, f, indent=4, ensure_ascii=False)
@@ -1625,12 +1627,11 @@ class IssueActionDialog(QDialog):
         if str(issue_data.get("manual_close", "0")) == "0":
             self.close_check.setEnabled(False)
             
-            # ★ 수정됨: 번역 파일 초기화 없이 코드 단에서 바로 언어를 감지하여 적용
-            add_text = " (Cannot close manually)" if self.config.get("language", "ko") == "en" else " (수동 클로즈 불가)"
+            # ★ 수정됨: 다국어(tr) 함수를 사용하여 언어 설정에 맞게 자동 변경되도록 처리
+            add_text = tr("lbl_cannot_close", " (수동 클로즈 불가)")
             self.close_check.setText(self.close_check.text() + add_text)
             
             self.close_check.setToolTip(tr("msg_manual_close_denied", "Zabbix 설정에서 수동 클로즈가 허용되지 않은 장애입니다."))
-
         issue_name_lbl = QLabel(issue_data.get("name", ""))
         issue_name_lbl.setWordWrap(True) 
         issue_name_lbl.setAlignment(Qt.AlignTop | Qt.AlignLeft)
@@ -2637,7 +2638,9 @@ class AlertHistoryDialog(QDialog):
         html += "</div>"
         
         if match_count == 0:
-            html = f"<p style='color: {time_c}; padding: 10px;'>선택한 조건({filter_text})에 해당하는 알림이 없습니다.</p>"
+            # ★ 수정됨: 미리 정의된 다국어 키(msg_no_matching_alerts)를 불러오고 format으로 필터명 삽입
+            msg = tr("msg_no_matching_alerts", "선택한 조건({filter})에 해당하는 알림이 없습니다.").format(filter=filter_text)
+            html = f"<p style='color: {time_c}; padding: 10px;'>{msg}</p>"
             
         self.browser.setHtml(html)
 
