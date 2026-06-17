@@ -31,7 +31,7 @@ def get_build_hash():
     except Exception:
         return "DEV01"
 
-APP_VERSION = "v1.0.6" 
+APP_VERSION = "v1.0.7" 
 BUILD_HASH = get_build_hash() 
 shared_mem = None
 
@@ -205,7 +205,8 @@ class Translator:
             "msg_custom_page": "리스트에 한 번에 표시할 알림 개수를 입력하세요.\n(최소 1개 이상)",
             "menu_use_win_noti": "Windows 기본 알림 사용",
             "menu_noti_settings": "🔔 알림 동작 설정",
-            "menu_use_custom_noti": "자체 UI 알림 사용"
+            "menu_use_custom_noti": "자체 UI 알림 사용",
+            "menu_save_state": "상태 기억하기 (히스토리/안 읽음)"
         }
         # 영어 기본 (en.json)
         en_data = {
@@ -333,7 +334,8 @@ class Translator:
             "msg_custom_page": "Enter number of alerts to display per page.\n(Min: 1)",
             "menu_use_win_noti": "Use Windows Native Notification",
             "menu_noti_settings": "🔔 Notification Behaviors",
-            "menu_use_custom_noti": "Use Custom UI Notification"
+            "menu_use_custom_noti": "Use Custom UI Notification",
+            "menu_save_state": "Remember State (History/Unread)"
         }
         with open(os.path.join(LANG_DIR, "ko.json"), 'w', encoding='utf-8') as f:
             json.dump(ko_data, f, indent=4, ensure_ascii=False)
@@ -393,6 +395,7 @@ def apply_debug_level(is_debug):
         logger.debug(tr_log("=== 디버그 모드가 활성화되었습니다 ===", "=== Debug mode activated ==="))
 
 CONFIG_FILE = os.path.join(CONFIG_DIR, "zabbix_overlay_config.json")
+STATE_FILE = os.path.join(CONFIG_DIR, "zabbix_overlay_state.json") # ★ 추가됨
 REG_APP_NAME = "ZabbixOverlayWidget"
 CUSTOM_FONT_FAMILY = ""  
 
@@ -465,6 +468,7 @@ def load_config():
         "autostart": False,
         "history_max_count": 100,
         "debug_mode": False,
+        "save_history_state": True, # ★ 추가됨 (기본값 켜짐)
         "language": "",  # ★ 수정됨: 기본값을 빈 문자열로 비워둠
         "noti_on_update": True
     }
@@ -1015,7 +1019,8 @@ class ToastManager:
 class RippleDot(QWidget):
     def __init__(self, hex_color, parent=None):
         super().__init__(parent)
-        self.setFixedSize(14, 18) # 우측 텍스트와 높이를 맞추기 위한 여백
+        # ★ 수정됨: 파동이 잘리지 않도록 위젯 도화지 크기를 14x18 -> 24x24로 넉넉하게 확장
+        self.setFixedSize(24, 24) 
         self.base_color = QColor(hex_color)
         self.progress = 0.0
         
@@ -1033,13 +1038,13 @@ class RippleDot(QWidget):
         
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing) # 둥근 테두리를 부드럽게
+        painter.setRenderHint(QPainter.Antialiasing) 
         
-        center = QPointF(self.width() / 2.0, self.height() / 2.0 + 1.0)
-        base_radius = 3.5 # ★ 2.5에서 3.5로 살짝 키움 (황금 비율)
+        center = QPointF(self.width() / 2.0, self.height() / 2.0)
+        base_radius = 4.0 # 고정 중앙 점 크기
         
-        # 1. 배경에서 퍼져나가는 파동
-        ripple_radius = base_radius + (self.width() / 2.0 - base_radius) * self.progress
+        # ★ 수정됨: 리스트 파동이 훨씬 더 크고 시원하게 퍼지도록 수식 수정 (반경이 최대 +10.0 더 커짐)
+        ripple_radius = base_radius + (10.0 * self.progress)
         alpha = int(255 * (1.0 - self.progress))
         ripple_color = QColor(self.base_color.red(), self.base_color.green(), self.base_color.blue(), alpha)
         
@@ -1047,25 +1052,24 @@ class RippleDot(QWidget):
         painter.setPen(Qt.NoPen)
         painter.drawEllipse(center, ripple_radius, ripple_radius)
         
-        # 2. 중앙 점
         painter.setBrush(QBrush(self.base_color))
         painter.drawEllipse(center, base_radius, base_radius)
 
 # ==========================================
-# ★ 추가됨: 완벽한 정원을 그리는 고정 점 (Static Dot)
+# 완벽한 정원을 그리는 고정 점 (Static Dot)
 # ==========================================
 class StaticDot(QWidget):
     def __init__(self, hex_color, parent=None):
         super().__init__(parent)
-        self.setFixedSize(14, 18) 
+        self.setFixedSize(24, 24) # 파동 위젯과 공간 비율을 맞추기 위해 똑같이 24로 확장
         self.base_color = QColor(hex_color)
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing) # 둥근 테두리를 부드럽게
+        painter.setRenderHint(QPainter.Antialiasing) 
         
-        center = QPointF(self.width() / 2.0, self.height() / 2.0 + 1.0)
-        base_radius = 3.5 # ★ 파동 원과 동일하게 3.5로 살짝 키움
+        center = QPointF(self.width() / 2.0, self.height() / 2.0)
+        base_radius = 4.0 
         
         painter.setBrush(QBrush(self.base_color))
         painter.setPen(Qt.NoPen)
@@ -1161,7 +1165,8 @@ class AlertListWindow(QWidget):
         self.read_all_btn = QPushButton("✔ 모두 읽기")
         self.read_all_btn.setFixedSize(80, 28)
         self.read_all_btn.setCursor(Qt.PointingHandCursor)
-        self.read_all_btn.setStyleSheet(modern_btn_style.replace("font-size: 16px;", "font-size: 12px;"))
+        # ★ 수정됨: Arial 폰트를 IBM Plex Sans KR 폰트로 교체 적용
+        self.read_all_btn.setStyleSheet(modern_btn_style.replace("font-size: 16px;", "font-size: 12px;").replace("Arial", "'IBM Plex Sans KR'"))
         self.read_all_btn.clicked.connect(self.mark_all_read)
 
         self.refresh_btn = QPushButton("↻")
@@ -1227,6 +1232,7 @@ class AlertListWindow(QWidget):
     def mark_all_read(self):
         for p in self.problems_list:
             self.owner_window.unread_events.discard(str(p['eventid']))
+        self.owner_window.save_state() # ★ 추가됨
         self._last_rendered_state = None # 강제 리렌더링
         self.refresh_page()
         self.owner_window.update() # 메인 원형 UI도 갱신
@@ -1434,6 +1440,7 @@ class AlertListWindow(QWidget):
         # ★ 추가됨: 창 열기 전에 읽음 처리
         if str(issue_data["eventid"]) in self.owner_window.unread_events:
             self.owner_window.unread_events.discard(str(issue_data["eventid"]))
+            self.owner_window.save_state() # ★ 추가됨
             self._last_rendered_state = None
             self.refresh_page()
             self.owner_window.update()
@@ -2115,7 +2122,26 @@ class AlertCircle(QWidget):
             lum = (0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue()) / 255
             return QColor(31, 41, 55) if lum > 0.55 else QColor(255, 255, 255)
 
-        current_bg = base_bg # 평상시 기본 배경색
+        current_bg = base_bg 
+        
+        # ==========================================
+        # ★ 수정됨: 평상시(기본) 색상을 미리 계산하여 애니메이션이 끝날 때 뚝 끊기지 않고 자연스럽게 돌아가게 함
+        # ==========================================
+        base_glow_color = self.circle_color
+        active_border_alpha = 255 if is_light else 180
+        current_border_alpha = int(active_border_alpha * (0.3 + 0.7 * progress))
+        default_border = QColor(base_glow_color.red(), base_glow_color.green(), base_glow_color.blue(), current_border_alpha)
+        
+        active_text = QColor(31, 41, 55) if is_light else QColor(255, 255, 255)
+        inactive_text = QColor(156, 163, 175) if is_light else QColor(113, 113, 122) 
+        
+        if self.alert_count == 0:
+            default_text = blend(inactive_text, active_text, progress)
+            dim_num = QColor(base_glow_color.red(), base_glow_color.green(), base_glow_color.blue(), 80)
+            default_num = blend(dim_num, base_glow_color, progress)
+        else:
+            default_text = active_text
+            default_num = base_glow_color
 
         # 색상 세팅 (부드러운 애니메이션 적용)
         if self.is_error_state:
@@ -2123,7 +2149,6 @@ class AlertCircle(QWidget):
             base_border = QColor(0, 0, 0, 30) if is_light else QColor(255, 255, 255, 50)
             base_text = QColor(31, 41, 55) if is_light else QColor(255, 255, 255)
             
-            # ★ 수정됨: 배경 자체가 에러 색상으로 강하게 물듦 (80% 농도)
             glow_bg = QColor(glow_color.red(), glow_color.green(), glow_color.blue(), base_bg.alpha())
             current_bg = blend(base_bg, glow_bg, self.blink_progress * 0.8)
             
@@ -2132,41 +2157,26 @@ class AlertCircle(QWidget):
             text_color = blend(base_text, contrast_text, self.blink_progress)
             num_color = text_color
             
-        else:
-            if self.is_highlighted:
-                # ★ 수정됨: 무미건조한 하얀색이 아니라, 각 심각도 본연의 색상으로 깜빡임
-                if self.highlight_type == 'created':
-                    glow_color = self.circle_color
-                else:
-                    glow_color = QColor(16, 185, 129) if is_light else QColor(46, 204, 113) # 복구(초록색)
-                    
-                base_border = self.circle_color
-                base_text = QColor(31, 41, 55) if is_light else QColor(255, 255, 255)
-                
-                # ★ 수정됨: 배경 자체가 발생/복구 색상으로 물듦 (75% 농도)
-                glow_bg = QColor(glow_color.red(), glow_color.green(), glow_color.blue(), base_bg.alpha())
-                current_bg = blend(base_bg, glow_bg, self.blink_progress * 0.75)
-                
-                contrast_text = get_contrast_color(glow_color)
-                border_color = blend(base_border, glow_color, self.blink_progress)
-                text_color = blend(base_text, contrast_text, self.blink_progress)
-                num_color = text_color
+        elif self.is_highlighted:
+            # ★ 깜빡임 진행도(self.blink_progress)가 0.0이 되면 정확히 default_border 등 '현재 상태'로 일치하게 됨
+            if self.highlight_type == 'created':
+                hl_color = self.circle_color
             else:
-                glow_color = self.circle_color
-                active_border_alpha = 255 if is_light else 180
-                current_border_alpha = int(active_border_alpha * (0.3 + 0.7 * progress))
-                border_color = QColor(glow_color.red(), glow_color.green(), glow_color.blue(), current_border_alpha)
+                hl_color = QColor(16, 185, 129) if is_light else QColor(46, 204, 113) # 복구(초록색)
                 
-                active_text = QColor(31, 41, 55) if is_light else QColor(255, 255, 255)
-                inactive_text = QColor(156, 163, 175) if is_light else QColor(113, 113, 122) 
-                
-                if self.alert_count == 0:
-                    text_color = blend(inactive_text, active_text, progress)
-                    dim_num = QColor(glow_color.red(), glow_color.green(), glow_color.blue(), 80)
-                    num_color = blend(dim_num, glow_color, progress)
-                else:
-                    text_color = active_text
-                    num_color = glow_color
+            glow_bg = QColor(hl_color.red(), hl_color.green(), hl_color.blue(), base_bg.alpha())
+            current_bg = blend(base_bg, glow_bg, self.blink_progress * 0.75)
+            
+            contrast_text = get_contrast_color(hl_color)
+            
+            border_color = blend(default_border, hl_color, self.blink_progress)
+            text_color = blend(default_text, contrast_text, self.blink_progress)
+            num_color = blend(default_num, contrast_text, self.blink_progress)
+            
+        else:
+            border_color = default_border
+            text_color = default_text
+            num_color = default_num
 
         # 2. 배경 및 테두리 그리기
         painter.setBrush(QBrush(current_bg)) # ★ base_bg에서 current_bg로 변경!
@@ -2259,15 +2269,23 @@ class AlertCircle(QWidget):
         painter.drawText(0, int(self.height() * 0.45), self.width(), int(self.height() * 0.45), Qt.AlignCenter, count_str)
 
         # ==========================================
-        # ★ 추가됨: 안 읽은 이벤트가 있으면 우측 상단에 파동 치는 미니 원 그리기
+        # ★ 수정됨: 안 읽은 이벤트가 있으면 우측 상단(또는 정중앙)에 파동 치는 미니 원 그리기
         # ==========================================
         has_unread = any(str(p['eventid']) in self.window().unread_events for p in self.problems)
         if has_unread:
-            badge_center = QPointF(self.width() - 14, 14)
+            if "rectangle" in theme:
+                # ★ 수정됨: 고정 픽셀(14px) 대신 위젯 넓이의 15% 비율로 동적 계산하여 쏠림 현상 원천 차단
+                offset = self.width() * 0.15 
+                badge_center = QPointF(self.width() - offset, offset)
+            else:
+                # 원형 모드: X는 정중앙(r), Y는 중심에서 위쪽 25% (r * 0.25)
+                r = self.width() / 2.0
+                badge_center = QPointF(r, r * 0.25)
+
             badge_color = QColor(231, 76, 60) # 빨간색
             
             # 파동 그리기
-            ripple_radius = 4.0 + (10.0 * self.unread_progress)
+            ripple_radius = 4.0 + (8.0 * self.unread_progress)
             alpha = int(255 * (1.0 - self.unread_progress))
             painter.setBrush(QBrush(QColor(badge_color.red(), badge_color.green(), badge_color.blue(), alpha)))
             painter.setPen(Qt.NoPen)
@@ -2742,12 +2760,14 @@ class ZabbixDesktopWidget(QWidget):
     def __init__(self):
         super().__init__()
         self.config = load_config()
-        self.unread_events = set() # ★ 추가됨: 안 읽은 알림 이벤트 ID 추적
+        self.unread_events = set() 
+        self.alert_history = []
+        self.load_state() # ★ 추가됨: 프로그램 시작 시 디스크에서 상태 불러오기
+        
         apply_debug_level(self.config.get("debug_mode", False))
         self.toast_manager = ToastManager(self, self.config)
         self.is_resize_mode = False
-        self.in_error_state = False 
-        self.alert_history = []
+        self.in_error_state = False
         self._resize_corner = None
         self._resize_start_global = QPoint()
         self._resize_start_size = 0
@@ -2769,6 +2789,43 @@ class ZabbixDesktopWidget(QWidget):
         self.api_timer.timeout.connect(self.fetch_zabbix_data)
         self.api_timer.start(self.config["refresh_interval"] * 1000) 
         self.fetch_zabbix_data()
+
+    # ==========================================
+    # ★ 추가됨: 상태(히스토리, 안 읽음 뱃지) 저장 및 로드 로직
+    # ==========================================
+    def load_state(self):
+        if not self.config.get("save_history_state", True):
+            return
+        if os.path.exists(STATE_FILE):
+            try:
+                with open(STATE_FILE, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self.alert_history = data.get("alert_history", [])
+                    self.unread_events = set(data.get("unread_events", []))
+            except Exception as e:
+                logger.error(f"상태 로드 실패: {e}")
+
+    def save_state(self):
+        if not self.config.get("save_history_state", True):
+            return
+        try:
+            with open(STATE_FILE, 'w', encoding='utf-8') as f:
+                json.dump({
+                    "alert_history": self.alert_history,
+                    "unread_events": list(self.unread_events) # set은 json 저장이 안되므로 list로 변환
+                }, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"상태 저장 실패: {e}")
+
+    def toggle_save_state(self):
+        enable = self.act_save_state.isChecked()
+        self.config["save_history_state"] = enable
+        self.save_current_settings()
+        if enable:
+            self.save_state()
+        else:
+            if os.path.exists(STATE_FILE):
+                os.remove(STATE_FILE) # 기능 끄면 파일 삭제
 
     def initUI(self):
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -2960,6 +3017,11 @@ class ZabbixDesktopWidget(QWidget):
         self.act_auto = QAction(tr("menu_autostart", "부팅 시 자동실행"), self.main_menu, checkable=True)
         self.act_auto.triggered.connect(self.toggle_autostart)
         self.main_menu.addAction(self.act_auto)
+
+        # ★ 추가됨: 상태 기억하기 스위치
+        self.act_save_state = QAction(tr("menu_save_state", "상태 기억하기 (히스토리/안 읽음)"), self.main_menu, checkable=True)
+        self.act_save_state.triggered.connect(self.toggle_save_state)
+        self.main_menu.addAction(self.act_save_state)
         
         self.main_menu.addSeparator()
 
@@ -3122,6 +3184,7 @@ class ZabbixDesktopWidget(QWidget):
         max_count = self.config.get("history_max_count", 100)
         if len(self.alert_history) > max_count:
             self.alert_history = self.alert_history[:max_count]
+        self.save_state() # ★ 추가됨
 
     # ★ 수정됨: 다이얼로그에 메인 위젯(self)을 통째로 넘겨서 실시간 갱신이 가능하도록 함
     def show_history_dialog(self):
@@ -3135,6 +3198,7 @@ class ZabbixDesktopWidget(QWidget):
         self.act_resize.setChecked(self.is_resize_mode)
         self.act_top.setChecked(self.config.get("always_on_top", False))
         self.act_auto.setChecked(self.config.get("autostart", False))
+        self.act_save_state.setChecked(self.config.get("save_history_state", True)) # ★ 추가됨
         self.act_circle.setChecked(self.config.get("theme", "circle") == "circle")
         self.act_circle_2.setChecked(self.config.get("theme", "circle") == "circle_2x3") 
         self.act_rect.setChecked(self.config.get("theme", "circle") == "rectangle")
@@ -3444,9 +3508,14 @@ class ZabbixDesktopWidget(QWidget):
             if ev_id not in current_problems_set:
                 resolved_problems.append((s_name, p))
 
+        # ==========================================
+        # ★ 추가됨: 이미 복구되어 사라진 이벤트 ID는 '안 읽음(unread)' 목록에서도 자동 청소
+        # (현재 활성화된 current_problems_set과 교집합만 남김)
+        # ==========================================
+        self.unread_events.intersection_update(current_problems_set)
+
         # 3. 발생, 복구, 업데이트 알림 팝업 띄우기 & 히스토리에 기록하기
-        if getattr(self, '_first_load_done', False):
-            
+        if getattr(self, '_first_load_done', False):            
             # [🚨 장애 발생 팝업 처리]
             for s_name, p in new_problems:
                 self.unread_events.add(str(p['eventid'])) # ★ 추가됨: 안 읽음 처리
@@ -3512,6 +3581,7 @@ class ZabbixDesktopWidget(QWidget):
         for circle in self.circles:
             if getattr(circle, 'is_waiting_for_data', False):
                 circle.stop_loading_and_show()
+        self.save_state() # ★ 추가됨
 
     def on_api_error(self, error_msg):
         for circle in self.circles:
