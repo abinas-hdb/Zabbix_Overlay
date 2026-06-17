@@ -2127,25 +2127,26 @@ class AlertCircle(QWidget):
         # ==========================================
         # ★ 수정됨: 평상시(기본) 색상을 미리 계산하여 애니메이션이 끝날 때 뚝 끊기지 않고 자연스럽게 돌아가게 함
         # ==========================================
-        base_glow_color = self.circle_color
+        glow_color = self.circle_color # ★ 핵심 수정: 스피너가 참조할 수 있도록 기본 glow_color를 최상단에 미리 선언!
+        
         active_border_alpha = 255 if is_light else 180
         current_border_alpha = int(active_border_alpha * (0.3 + 0.7 * progress))
-        default_border = QColor(base_glow_color.red(), base_glow_color.green(), base_glow_color.blue(), current_border_alpha)
+        default_border = QColor(glow_color.red(), glow_color.green(), glow_color.blue(), current_border_alpha)
         
         active_text = QColor(31, 41, 55) if is_light else QColor(255, 255, 255)
         inactive_text = QColor(156, 163, 175) if is_light else QColor(113, 113, 122) 
         
         if self.alert_count == 0:
             default_text = blend(inactive_text, active_text, progress)
-            dim_num = QColor(base_glow_color.red(), base_glow_color.green(), base_glow_color.blue(), 80)
-            default_num = blend(dim_num, base_glow_color, progress)
+            dim_num = QColor(glow_color.red(), glow_color.green(), glow_color.blue(), 80)
+            default_num = blend(dim_num, glow_color, progress)
         else:
             default_text = active_text
-            default_num = base_glow_color
+            default_num = glow_color
 
         # 색상 세팅 (부드러운 애니메이션 적용)
         if self.is_error_state:
-            glow_color = QColor(231, 76, 60)
+            glow_color = QColor(231, 76, 60) # 에러일 땐 빨간색으로 변신
             base_border = QColor(0, 0, 0, 30) if is_light else QColor(255, 255, 255, 50)
             base_text = QColor(31, 41, 55) if is_light else QColor(255, 255, 255)
             
@@ -2158,18 +2159,17 @@ class AlertCircle(QWidget):
             num_color = text_color
             
         elif self.is_highlighted:
-            # ★ 깜빡임 진행도(self.blink_progress)가 0.0이 되면 정확히 default_border 등 '현재 상태'로 일치하게 됨
             if self.highlight_type == 'created':
-                hl_color = self.circle_color
+                glow_color = self.circle_color # 발생일 땐 자기 자신 색상
             else:
-                hl_color = QColor(16, 185, 129) if is_light else QColor(46, 204, 113) # 복구(초록색)
+                glow_color = QColor(16, 185, 129) if is_light else QColor(46, 204, 113) # 복구일 땐 초록색으로 변신
                 
-            glow_bg = QColor(hl_color.red(), hl_color.green(), hl_color.blue(), base_bg.alpha())
+            glow_bg = QColor(glow_color.red(), glow_color.green(), glow_color.blue(), base_bg.alpha())
             current_bg = blend(base_bg, glow_bg, self.blink_progress * 0.75)
             
-            contrast_text = get_contrast_color(hl_color)
+            contrast_text = get_contrast_color(glow_color)
             
-            border_color = blend(default_border, hl_color, self.blink_progress)
+            border_color = blend(default_border, glow_color, self.blink_progress)
             text_color = blend(default_text, contrast_text, self.blink_progress)
             num_color = blend(default_num, contrast_text, self.blink_progress)
             
