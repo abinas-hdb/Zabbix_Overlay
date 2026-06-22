@@ -2834,8 +2834,11 @@ class ZabbixDesktopWidget(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         
         flags = Qt.FramelessWindowHint | Qt.Tool
-        if self.config.get("always_on_top", False): flags |= Qt.WindowStaysOnTopHint
-        else: flags |= Qt.WindowStaysOnBottomHint
+        if self.config.get("always_on_top", False): 
+            flags |= Qt.WindowStaysOnTopHint
+        # ★ 핵심 수정: 항상 아래(BottomHint) 속성 삭제! 
+        # (이게 켜져 있으면 우리가 위로 올려도 엔진이 다시 바닥으로 패대기칩니다)
+        
         self.setWindowFlags(flags)
         
         self.main_layout = QGridLayout()
@@ -3342,7 +3345,53 @@ class ZabbixDesktopWidget(QWidget):
             
         self.tray.setToolTip(f"Zabbix Overlay Widget {APP_VERSION}")
         self.tray.setContextMenu(self.main_menu)
+        # ★ 추가됨: 트레이 아이콘 클릭(활성화) 이벤트 연결
+        self.tray.activated.connect(self.on_tray_activated)
         self.tray.show()
+
+    # ==========================================
+    # ★ 수정됨: 트레이 아이콘 클릭 시 위젯을 최상단으로 끌어올리는 로직 (타이머 꼼수 제거, 완벽 동기화)
+    # ==========================================
+    def on_tray_activated(self, reason):
+        if reason == QSystemTrayIcon.Trigger:
+            self.bring_to_front()
+
+    def bring_to_front(self):
+        logger.debug(tr_log("[UI 액션] 트레이 아이콘 좌클릭: 위젯 최상단 호출", "[UI Action] Tray icon left-clicked: Bring widget to front"))
+
+        # 1. 가상 Alt 키로 윈도우의 포커스 방어막 무력화
+        VK_MENU = 0x12
+        KEYEVENTF_KEYUP = 0x0002
+        ctypes.windll.user32.keybd_event(VK_MENU, 0, 0, 0)
+        ctypes.windll.user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+
+        # 2. 메인 위젯 활성화
+        self.showNormal()
+        self.activateWindow()
+        self.raise_()
+
+        hwnd = int(self.winId())
+        ctypes.windll.user32.SetForegroundWindow(hwnd)
+
+        # 3. Z-Order 강제 주입 (항상 위 모드면 HWND_TOPMOST(-1), 꺼져있으면 HWND_TOP(0)으로 맨 위로 올림)
+        HWND_TARGET = -1 if self.config.get("always_on_top", False) else 0
+        SWP_NOSIZE_NOMOVE_SHOW = 0x0001 | 0x0002 | 0x0040
+
+        ctypes.windll.user32.SetWindowPos(hwnd, HWND_TARGET, 0, 0, 0, 0, SWP_NOSIZE_NOMOVE_SHOW)
+
+        # 4. 열려있는 리스트 창 동기화
+        for circle in self.circles:
+            if getattr(circle, 'list_window', None) and circle.list_window.isVisible():
+                lw = circle.list_window
+                lw.showNormal()
+                lw.activateWindow()
+                lw.raise_()
+
+                lw_hwnd = int(lw.winId())
+                ctypes.windll.user32.SetForegroundWindow(lw_hwnd)
+                ctypes.windll.user32.SetWindowPos(lw_hwnd, HWND_TARGET, 0, 0, 0, 0, SWP_NOSIZE_NOMOVE_SHOW)
+
+    # (주의: 기존에 있던 def _drop_topmost(self): 함수는 더 이상 필요 없으니 통째로 지워주세요!)
 
     def toggle_circle_list(self, target_circle):
         logger.debug(tr_log(f"[UI 액션] '{target_circle.severity_name}' 알림 리스트 열기/닫기 클릭", f"[UI Action] '{target_circle.severity_name}' alert list open/close clicked"))
