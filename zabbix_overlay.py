@@ -843,6 +843,7 @@ class ToastWidget(QWidget):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WA_DeleteOnClose) # ★ 추가됨: 창이 닫히면 메모리에서 즉시 영구 삭제
         self.setFixedWidth(360)
         
         self.setWindowOpacity(0.0)
@@ -1086,6 +1087,7 @@ class AlertListWindow(QWidget):
             
         self.setWindowFlags(base_flags)
         self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_DeleteOnClose) # ★ 추가됨: 창이 닫히면 메모리에서 즉시 영구 삭제
         self._is_dragging = False
         self._drag_start_pos = QPoint()
         self.config = config
@@ -1515,20 +1517,27 @@ class AlertListWindow(QWidget):
         # 이미 닫히는 애니메이션이 진행 중이 아니라면
         if not getattr(self, '_is_closing', False):
             self._is_closing = True
-            event.ignore()  # 즉시 꺼지는 것을 막음
+            event.ignore()  
             
-            # 0.15초(150ms) 동안 스르륵 사라지는 페이드아웃 효과
+            # ★ 핵심 수정: 창이 닫히기 시작하는 '즉시' 파이썬 참조를 먼저 끊어버려서
+            # 애니메이션이 도는 0.15초 동안 다른 스레드가 절대 접근하지 못하게 원천 차단!
+            if self.owner_window:
+                for circle in self.owner_window.circles:
+                    if getattr(circle, 'list_window', None) == self:
+                        circle.list_window = None 
+            
             self.close_anim = QVariantAnimation(self)
             self.close_anim.setDuration(150)
             self.close_anim.setStartValue(self.windowOpacity())
             self.close_anim.setEndValue(0.0)
             self.close_anim.valueChanged.connect(self.setWindowOpacity)
-            self.close_anim.finished.connect(self.close)  # 투명해지면 진짜로 창을 닫음
+            self.close_anim.finished.connect(self.close)  
             self.close_anim.start()
             return
             
         logger.debug(tr_log(f"[UI 액션] '{self.title}' 알림 리스트 창 닫기", f"[UI Action] '{self.title}' alert list window closed"))
         super().closeEvent(event)
+        self.deleteLater() # C++ 객체 안전 파괴
 
 class IssueActionDialog(QDialog):
     def __init__(self, issue_data, parent=None):
@@ -3196,6 +3205,7 @@ class ZabbixDesktopWidget(QWidget):
     def show_history_dialog(self):
         logger.debug(tr_log("[UI 액션] 알림 히스토리 다이얼로그 열기", "[UI Action] Alert history dialog opened"))
         dlg = AlertHistoryDialog(self, self)
+        dlg.setAttribute(Qt.WA_DeleteOnClose) # ★ 추가됨: 다이얼로그 종료 시 C++ 객체 영구 삭제
         dlg.exec_()
 
     def sync_menu_states(self):
@@ -3460,7 +3470,6 @@ class ZabbixDesktopWidget(QWidget):
         for circle in self.circles:
             if getattr(circle, 'list_window', None) and circle.list_window.isVisible():
                 circle.list_window.close()
-                circle.list_window.deleteLater()
                 
         # 2. ★ 핵심: 떠 있는 Toast(알림창)들을 강제 파괴하여 C++ 참조 오류(Crash) 원천 차단
         for t in list(self.toast_manager.toasts):
@@ -3479,14 +3488,14 @@ class ZabbixDesktopWidget(QWidget):
         QApplication.instance().exit(1337)
 
     def fetch_zabbix_data(self):
-        # ★ 추가: 기존 통신 스레드가 아직 일하고 있다면, 충돌 방지를 위해 이번 턴은 건너뜀
-        if hasattr(self, 'worker') and self.worker.isRunning():
+        # ★ 수정됨: C++ 객체 삭제(RuntimeError) 에러를 방지하기 위해, 스레드 자체에 묻지 않고 파이썬 변수로 상태 확인
+        if getattr(self, 'is_fetching', False):
             logger.debug(tr_log("[API 갱신] 이전 통신이 아직 진행 중이므로 이번 요청은 건너뜁니다.", "[API Update] Previous request is still running, skipping this turn."))
             return
             
         logger.debug(tr_log("[API 갱신] 타이머 또는 수동 조작에 의해 Zabbix 데이터 갱신 요청", "[API Update] Zabbix data update requested by timer or manual action"))
         
-        # ★ 추가됨 1: 통신 시작할 때 플래그 켜기
+        # ★ 통신 시작할 때 플래그 켜기
         self.is_fetching = True
         
         # 주기적으로 최상단 속성 및 실제 화면 컴포지팅 레이어 강제 재조립
@@ -3503,6 +3512,7 @@ class ZabbixDesktopWidget(QWidget):
         self.worker = ZabbixWorker(self.config)
         self.worker.data_fetched.connect(self.on_data_fetched)
         self.worker.error_occurred.connect(self.on_api_error)
+        self.worker.finished.connect(self.worker.deleteLater) # ★ 추가됨: 백그라운드 통신 작업이 끝나면 스레드를 즉시 메모리에서 폭파
         self.worker.start()
 
     def on_data_fetched(self, categorized_data):
