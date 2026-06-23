@@ -2602,8 +2602,11 @@ class AlertHistoryDialog(QDialog):
         self.last_history_len = len(self.main_widget.alert_history)
         history_data = self.main_widget.alert_history
         filter_text = self.filter_combo.currentText()
+        is_en = self.config.get("language", "ko") == "en" # ★ 현재 언어 감지
         
-        # ★ 다크/라이트 모드에 맞춰 HTML 텍스트 및 점선 색상 동적 변경
+        txt_all = tr("filter_all", "전체보기")
+        txt_sys = tr("sev_system", "기타 (시스템)")
+        
         time_c = "#7F8C8D" if self.is_light else "#9CA3AF"
         msg_c = "#2C3E50" if self.is_light else "#E4E4E7"
         line_c = "#E5E7EB" if self.is_light else "#3F3F46"
@@ -2613,24 +2616,55 @@ class AlertHistoryDialog(QDialog):
             return
             
         color_map = {
-            "심각": "#E74C3C", 
-            "중증": "#E67E22", 
-            "경미": "#F39C12", 
-            "경고": "#F1C40F", 
-            "정보": "#3498DB", 
-            "미정": "#95A5A6", 
-            "🚨 시스템": "#E74C3C",
-            "✅ 시스템": "#2ECC71"
+            "심각": "#E74C3C", "Disaster": "#E74C3C",
+            "중증": "#E67E22", "High": "#E67E22",
+            "경미": "#F39C12", "Average": "#F39C12",
+            "경고": "#F1C40F", "Warning": "#F1C40F",
+            "정보": "#3498DB", "Info": "#3498DB",
+            "미정": "#95A5A6", "Unknown": "#95A5A6",
+            "🚨 시스템": "#E74C3C", "✅ 시스템": "#2ECC71",
+            "🚨 System": "#E74C3C", "✅ System": "#2ECC71"
         }
             
         html = "<div style='padding: 5px;'>"
         match_count = 0
         for item in history_data:
             lvl = item['level']
+            msg_text = item['msg']
             
-            if filter_text != "전체보기":
-                if filter_text == "기타 (시스템)":
-                    if lvl not in ["🚨 시스템", "✅ 시스템"]: continue
+            # ==========================================
+            # ★ 핵심 수정: state.json 파일에 과거 언어로 고정되어 저장된 텍스트라도, 
+            # 화면에 그리기 직전에 현재 선택된 언어로 '실시간 강제 번역' 수행!
+            # ==========================================
+            if is_en:
+                lvl = lvl.replace("시스템", "System")
+                for ko, en in [("심각", "Disaster"), ("중증", "High"), ("경미", "Average"), ("경고", "Warning"), ("정보", "Info"), ("미정", "Unknown")]:
+                    if lvl == ko: lvl = en
+                    msg_text = msg_text.replace(f"[{ko}]", f"[{en}]")
+                
+                msg_text = msg_text.replace("복구됨:", "Resolved:")
+                msg_text = msg_text.replace("업데이트:", "Updated:")
+                msg_text = msg_text.replace("심각도 변경", "Severity changed")
+                msg_text = msg_text.replace("메시지 추가", "Message added")
+                msg_text = msg_text.replace("서버 연결 끊김", "Connection lost")
+                msg_text = msg_text.replace("Zabbix 서버 연결이 복구되었습니다.", "Zabbix server connection restored.")
+            else:
+                lvl = lvl.replace("System", "시스템")
+                for ko, en in [("심각", "Disaster"), ("중증", "High"), ("경미", "Average"), ("경고", "Warning"), ("정보", "Info"), ("미정", "Unknown")]:
+                    if lvl == en: lvl = ko
+                    msg_text = msg_text.replace(f"[{en}]", f"[{ko}]")
+                    
+                msg_text = msg_text.replace("Resolved:", "복구됨:")
+                msg_text = msg_text.replace("Updated:", "업데이트:")
+                msg_text = msg_text.replace("Severity changed", "심각도 변경")
+                msg_text = msg_text.replace("Message added", "메시지 추가")
+                msg_text = msg_text.replace("Connection lost", "서버 연결 끊김")
+                msg_text = msg_text.replace("Zabbix server connection restored.", "Zabbix 서버 연결이 복구되었습니다.")
+
+            # 필터링 조건
+            if filter_text != txt_all:
+                if filter_text == txt_sys:
+                    if lvl not in ["🚨 시스템", "✅ 시스템", "🚨 System", "✅ System"]: continue
                 else:
                     if lvl != filter_text: continue
                     
@@ -2639,7 +2673,7 @@ class AlertHistoryDialog(QDialog):
             html += f"<div style='margin-bottom: 12px;'>"
             html += f"<span style='color: {time_c}; font-size: 12px;'>[{item['time']}]</span> "
             html += f"<strong style='color: {color};'>[{lvl}]</strong><br> "
-            msg_html = item['msg'].replace('\n', '<br>')
+            msg_html = msg_text.replace('\n', '<br>')
             html += f"<span style='color: {msg_c}; font-size: 13px; line-height: 1.4;'>{msg_html}</span>"
             html += f"</div><hr style='border: 0; border-top: 1px dashed {line_c};'>"
             match_count += 1
@@ -2647,7 +2681,6 @@ class AlertHistoryDialog(QDialog):
         html += "</div>"
         
         if match_count == 0:
-            # ★ 수정됨: 미리 정의된 다국어 키(msg_no_matching_alerts)를 불러오고 format으로 필터명 삽입
             msg = tr("msg_no_matching_alerts", "선택한 조건({filter})에 해당하는 알림이 없습니다.").format(filter=filter_text)
             html = f"<p style='color: {time_c}; padding: 10px;'>{msg}</p>"
             
@@ -3519,10 +3552,16 @@ class ZabbixDesktopWidget(QWidget):
         if self.in_error_state:
             self.in_error_state = False
             logger.debug(tr_log("[API 상태] Zabbix 서버 연결 복구됨", "[API Status] Zabbix server connection restored"))
-            # ★ 추가됨: 시스템 복구 알림 기록
-            self.add_history_log("✅ 시스템", "Zabbix 서버 연결이 복구되었습니다.")
+            
+            # ★ 수정됨: 다국어 감지 후 동적 기록 (시스템 복구)
+            is_en = self.config.get("language", "ko") == "en"
+            sys_ok = "✅ System" if is_en else "✅ 시스템"
+            msg_restored = tr("msg_server_restored", "Zabbix 서버 연결이 복구되었습니다.")
+            title_restored = "System Restored" if is_en else "시스템 복구"
+            
+            self.add_history_log(sys_ok, msg_restored)
             if self.config.get("noti_duration", 7) != 0:
-                self.show_notification("시스템 복구", "✅ Zabbix 서버 연결이 복구되었습니다.", "✅ Zabbix 서버 연결이 복구되었습니다.", "resolved", self.config.get("noti_duration", 7))
+                self.show_notification(title_restored, msg_restored, msg_restored, "resolved", self.config.get("noti_duration", 7))
             for circle in self.circles: circle.clear_error_state()
 
         # ★ 1. 알림 누락 방지 및 '복구/업데이트 알림'을 찾기 위해 기존 데이터 저장
@@ -3598,34 +3637,43 @@ class ZabbixDesktopWidget(QWidget):
                 self.add_history_log(s_name, history_msg) 
                 self.show_notification(f"[{s_name}] {p['name']}", plain_msg, toast_msg, 'created', self.config.get("noti_duration", 7))
                     
+            is_en = self.config.get("language", "ko") == "en" # 언어 체크
+
             # ★ [🔄 장애 업데이트 팝업 처리]
             if self.config.get("noti_on_update", True):
                 for s_name, p, old_s_name, is_new_msg in updated_problems:
-                    self.unread_events.add(str(p['eventid'])) # ★ 추가됨: 안 읽음 처리
+                    self.unread_events.add(str(p['eventid'])) 
                     safe_title = p['name'].replace('<', '&lt;').replace('>', '&gt;')
                     
                     update_details = []
                     if s_name != old_s_name:
-                        update_details.append(tr("lbl_sev_changed", "심각도 변경({old}➔{new})").format(old=old_s_name, new=s_name))
+                        txt = f"Severity changed({old_s_name}➔{s_name})" if is_en else f"심각도 변경({old_s_name}➔{s_name})"
+                        update_details.append(txt)
                     if is_new_msg:
-                        update_details.append(tr("lbl_msg_added", "메시지 추가"))
+                        txt = "Message added" if is_en else "메시지 추가"
+                        update_details.append(txt)
                         
                     detail_str = ", ".join(update_details)
+                    lbl_upd = "Updated" if is_en else "업데이트"
                     
-                    toast_msg = f"<span style='font-family: \"IBM Plex Sans KR\", sans-serif; font-size: 13px; font-weight: bold;'>[{tr('lbl_updated', '업데이트')}: {s_name}] {safe_title}</span><br><span style='font-family: \"IBM Plex Sans KR\", sans-serif; color: #F39C12; font-size: 11px; font-weight: bold;'>💡 {detail_str}</span>"
+                    toast_msg = f"<span style='font-family: \"IBM Plex Sans KR\", sans-serif; font-size: 13px; font-weight: bold;'>[{lbl_upd}: {s_name}] {safe_title}</span><br><span style='font-family: \"IBM Plex Sans KR\", sans-serif; color: #F39C12; font-size: 11px; font-weight: bold;'>💡 {detail_str}</span>"
                     
-                    # 수정 후 (깔끔!)
-                    self.add_history_log(s_name, f"({tr('lbl_updated', '업데이트')}: {detail_str}) {safe_title}") 
-                    self.show_notification(f"[{tr('lbl_updated', '업데이트')}: {s_name}] {p['name']}", f"💡 {detail_str}", toast_msg, 'updated', self.config.get("noti_duration", 7))
+                    self.add_history_log(s_name, f"({lbl_upd}: {detail_str}) {safe_title}") 
+                    self.show_notification(f"[{lbl_upd}: {s_name}] {p['name']}", f"💡 {detail_str}", toast_msg, 'updated', self.config.get("noti_duration", 7))
 
             # ★ [✅ 장애 복구 팝업 처리]
             for s_name, p in resolved_problems:
                 safe_title = p['name'].replace('<', '&lt;').replace('>', '&gt;')
-                toast_msg = f"<span style='font-family: \"IBM Plex Sans KR\", sans-serif; font-size: 13px; font-weight: bold;'>[{tr('lbl_resolved', '복구')}] {safe_title}</span>"
+                lbl_res = tr('lbl_resolved', '복구')
+                toast_msg = f"<span style='font-family: \"IBM Plex Sans KR\", sans-serif; font-size: 13px; font-weight: bold;'>[{lbl_res}] {safe_title}</span>"
                 
-                # 수정 후 (깔끔!)
-                self.add_history_log("✅ 시스템", f"[{s_name}] 복구됨: {safe_title}") 
-                self.show_notification(f"[{tr('lbl_resolved', '복구')}] {p['name']}", "장애가 정상적으로 복구되었습니다.", toast_msg, 'resolved', self.config.get("noti_duration", 7))
+                # ★ 수정됨: 다국어 지원 (복구됨)
+                sys_ok = "✅ System" if is_en else "✅ 시스템"
+                resolved_text = "Resolved:" if is_en else "복구됨:"
+                plain_msg = "Issue has been resolved." if is_en else "장애가 정상적으로 복구되었습니다."
+                
+                self.add_history_log(sys_ok, f"[{s_name}] {resolved_text} {safe_title}") 
+                self.show_notification(f"[{lbl_res}] {p['name']}", plain_msg, toast_msg, 'resolved', self.config.get("noti_duration", 7))
                 
         self._first_load_done = True
 
@@ -3654,10 +3702,15 @@ class ZabbixDesktopWidget(QWidget):
         if not self.in_error_state:
             self.in_error_state = True
             logger.error(tr_log(f"[API 상태] Zabbix 서버 연결 끊김: {error_msg}", f"[API Status] Zabbix server connection lost: {error_msg}"))
-            self.add_history_log("🚨 시스템", f"서버 연결 끊김 ({error_msg})")
             
-            # ★ 수정됨: 분기 래퍼 함수만 남기고 지저분한 중복 조건문 싹 청소
-            self.show_notification("🚨 서버 연결 오류", error_msg, f"🚨 연결 오류: {error_msg}", 'error', self.config.get("noti_duration", 7))
+            # ★ 수정됨: 다국어 지원 (서버 에러)
+            is_en = self.config.get("language", "ko") == "en"
+            sys_err = "🚨 System" if is_en else "🚨 시스템"
+            conn_lost = "Connection lost" if is_en else "서버 연결 끊김"
+            title_err = "🚨 Connection Error" if is_en else "🚨 서버 연결 오류"
+            
+            self.add_history_log(sys_err, f"{conn_lost} ({error_msg})")
+            self.show_notification(title_err, error_msg, f"🚨 {conn_lost}: {error_msg}", 'error', self.config.get("noti_duration", 7))
             
             for i, char in enumerate(["E", "R", "R", "O", "R", "!"]):
                 self.circles[i].set_error_state(char)
